@@ -1,0 +1,105 @@
+[project]
+name = "z-graphrag-k"
+version = "0.1.0"
+description = "知识库 GraphRAG：Milvus + LangChain + Neo4j + 可插拔 Embedding/LLM"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = { text = "MIT" }
+
+dependencies = [
+    # --- 配置 ---
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "python-dotenv>=1.0",
+
+    # --- 向量库 ---
+    "pymilvus>=2.5,<4",
+    # faiss 1.16.0 在 AVX512 机器上缺 swigfaiss_avx512*.pyd，锁到 1.12
+    "faiss-cpu>=1.9,<1.13; sys_platform == 'win32'",
+    "milvus-lite>=2.4; sys_platform != 'win32' or python_version >= '3.10'",
+    "langchain-milvus>=0.2",
+
+    # --- LangChain ---
+    "langchain>=0.3",
+    "langchain-core>=0.3",
+    "langchain-text-splitters>=0.3",
+
+    # --- LLM / Embedding 提供方（按需启用，全部可选） ---
+    "langchain-openai>=0.2",
+    "langchain-anthropic>=0.3",
+    "langchain-ollama>=0.2",
+
+    # --- 文档解析 ---
+    "pypdf>=5.0",
+    "docx2txt>=0.8",
+    "unstructured>=0.16",
+    "markdown-it-py>=3.0",
+    "openpyxl>=3.1",
+    "python-pptx>=0.6",
+
+    # --- 认证 ---
+    "ldap3>=2.9",
+
+    # --- API ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+
+    # --- 日志 ---
+    "loguru>=0.7",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+# 本地 embedding / rerank（CPU/GPU 推理）
+local = [
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+    "transformers>=4.40",
+]
+
+# 图数据库（Milvus 之外的 GraphRAG 能力，后续启用）
+graph = [
+    "neo4j>=5.0",
+    "langchain-neo4j>=0.2",
+]
+
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pyyaml>=6.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+kgrag = "kgrag.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kgrag"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+# FastAPI 的 Depends/File 等作为参数默认值是官方惯用法
+flake8-bugbear = { extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.Query"] }
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
