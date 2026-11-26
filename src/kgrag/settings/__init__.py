@@ -219,7 +219,11 @@ CONFIG_GROUPS: list[dict[str, Any]] = [
                 "label": "提供方",
                 "type": "select",
                 "options": ["lite", "milvus"],
-                "help": "lite 为嵌入式本地文件，零依赖适合单机；milvus 连接独立服务端，支持多客户端并发。",
+                "help": (
+                    "lite 为嵌入式本地文件，零依赖、无需配置，适合单机；"
+                    "milvus 需先部署服务端（docker compose --profile milvus up -d），"
+                    "支持多客户端并发。切换后需重启服务。"
+                ),
             },
             {
                 "key": "vectorstore_lite_path",
@@ -231,7 +235,12 @@ CONFIG_GROUPS: list[dict[str, Any]] = [
                 "key": "milvus_uri",
                 "label": "Milvus 地址",
                 "type": "text",
-                "help": "provider=milvus 时生效，如 http://localhost:19530。",
+                "placeholder": "http://localhost:19530",
+                "help": (
+                    "provider=milvus 时生效。填 Milvus 服务端的 gRPC 地址："
+                    "同机部署用 localhost:19530；应用也在 Docker 里要用容器名 "
+                    "http://milvus:19530。详见 docs/MILVUS.md"
+                ),
             },
             {
                 "key": "milvus_token",

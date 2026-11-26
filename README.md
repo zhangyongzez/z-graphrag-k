@@ -312,19 +312,34 @@ docker compose up -d
 
 ### 切换到 Milvus 服务端
 
+> 完整说明见 [**Milvus 部署文档**](docs/MILVUS.md)
+
 ```bash
 # 1. 启动 Milvus 栈（etcd + minio + milvus）
 docker compose --profile milvus up -d
 
-# 2. 确认健康
+# 2. 等 60~90 秒，确认三个容器都 healthy
 docker compose --profile milvus ps
+curl http://localhost:9091/healthz
 
-# 3. 修改 .env（用 Docker 时 milvus 地址是容器名）
+# 3. 在「系统配置 → 向量库」切换，或改 .env
 VECTORSTORE_PROVIDER=milvus
-MILVUS_URI=http://milvus:19530
+MILVUS_URI=http://localhost:19530
 ```
 
-不用 Docker 时，`MILVUS_URI` 填 `http://localhost:19530`。
+**地址怎么填**：
+
+| 部署方式 | MILVUS_URI |
+|---|---|
+| 服务端和应用在同一台机器 | `http://localhost:19530` |
+| 应用也在 Docker 里 | `http://milvus:19530` |
+| 服务端在另一台机器 | `http://192.168.1.100:19530` |
+
+> ⚠️ 应用在 Docker、Milvus 也在 Docker 时，**不能填 localhost**，
+> 容器内的 localhost 指向容器自己，必须用服务名 `milvus`。
+
+> ⚠️ Milvus 服务端**无法内置**——它是 etcd + minio + milvus 三个独立进程，
+> 镜像超 2 GB。内置版就是 Milvus Lite，已在用。
 
 ### Linux 直接部署
 
@@ -387,6 +402,7 @@ make fmt       # 格式化
 ## 文档
 
 - [**模型配置手册**](docs/MODEL_CONFIG.md) — **本地模型 / API 接口怎么配，各服务商参数对照**
+- [**Milvus 部署**](docs/MILVUS.md) — **Lite 与服务端怎么选、怎么部署、地址怎么填**
 - [架构说明](docs/ARCHITECTURE.md) — 详细设计、数据模型、权限模型
 - [使用指南](docs/USAGE.md) — 各页面操作说明、接口速查
 - [环境说明](docs/ENVIRONMENT.md) — 环境依赖与踩坑记录
