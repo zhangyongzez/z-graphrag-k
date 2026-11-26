@@ -939,10 +939,14 @@ async function loadModels() {
   }
 }
 
-/* 新增 / 编辑模型弹窗。model 为 null 时是新增 */
-function openModelModal(model) {
-  const isEdit = !!model;
-  const m = model || { kind: "llm", provider: "openai" };
+/* 新增 / 编辑模型弹窗。
+ * - openModelModal()                          → 新增（默认大模型）
+ * - openModelModal(null, {kind, provider})    → 新增（预填默认值）
+ * - openModelModal(existingModel)             → 编辑
+ */
+function openModelModal(model, defaults) {
+  const isEdit = !!model?.id;
+  const m = model || { kind: "llm", provider: "openai", ...defaults };
   modal({
     title: isEdit ? "编辑模型" : "新增模型",
     body: `
@@ -1095,7 +1099,7 @@ function openModelModal(model) {
 
 $("#btn-create-model").addEventListener("click", () => openModelModal(null));
 $("#btn-create-local-model").addEventListener("click", () =>
-  openModelModal({ kind: "embedding", provider: "local" }));
+  openModelModal(null, { kind: "embedding", provider: "local" }));
 
 $$("#model-tabs [data-kind]").forEach((b) => {
   b.addEventListener("click", () => {
