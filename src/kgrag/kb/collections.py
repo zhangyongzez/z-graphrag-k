@@ -18,7 +18,7 @@ from collections import Counter
 
 from pymilvus import MilvusClient
 
-from kgrag.config import Settings, get_settings
+from kgrag.config import Settings
 from kgrag.logging import get_logger
 
 logger = get_logger(__name__)
@@ -43,7 +43,11 @@ def _client(s: Settings | None = None) -> MilvusClient:
     with _lock:
         if _shared is not None:
             return _shared
-        s = s or get_settings()
+        if s is None:
+            # 必须用运行时配置（配置页可改），否则改了向量库不生效
+            from kgrag.settings import effective_settings
+
+            s = effective_settings()
 
         if s.vectorstore_provider == "lite":
             # 优先复用 langchain 已建立的连接

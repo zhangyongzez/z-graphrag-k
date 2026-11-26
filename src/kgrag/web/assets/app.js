@@ -393,6 +393,46 @@ async function loadKbDocs() {
 
 $("#btn-back-kb").addEventListener("click", () => show("kb"));
 
+/* 从服务器本地路径导入（适合大批量目录） */
+$("#btn-ingest-local").addEventListener("click", () => {
+  const kb = state.currentKb;
+  if (!kb) return;
+  modal({
+    title: "从服务器路径导入",
+    body: `
+      <label class="field"><span>文件或目录路径</span>
+        <input class="input" id="ing-path"
+          placeholder="D:\\文档\\产品手册  或  /data/docs">
+        <div class="field-hint">
+          填写<b>服务器上</b>的绝对路径。填目录会递归导入其中所有受支持的文件。<br>
+          该路径必须与当前服务运行在同一台机器上。
+        </div>
+      </label>
+      <div id="ing-result" class="field-hint"></div>`,
+    okText: "开始导入",
+    onOk: async () => {
+      const path = $("#ing-path").value.trim();
+      if (!path) throw new Error("路径不能为空");
+
+      const btn = document.querySelector("#modal-ok");
+      if (btn) { btn.disabled = true; btn.textContent = "导入中…"; }
+      const res = $("#ing-result");
+      if (res) res.textContent = "正在解析并写入向量库，大目录可能需要几分钟…";
+
+      try {
+        const r = await api(`/api/kb/${kb.id}/ingest?path=${encodeURIComponent(path)}`, {
+          method: "POST",
+        });
+        toast(`导入完成：${r.files} 个文件，${r.chunks} 个切块`, "ok");
+        loadKbDocs();
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "开始导入"; }
+      }
+    },
+  });
+  setTimeout(() => $("#ing-path")?.focus(), 0);
+});
+
 $("#btn-delete-kb").addEventListener("click", async () => {
   const kb = state.currentKb;
   if (!kb) return;

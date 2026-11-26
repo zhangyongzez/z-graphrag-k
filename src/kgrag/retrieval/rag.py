@@ -5,9 +5,9 @@ from __future__ import annotations
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
-from kgrag.config import get_settings
 from kgrag.llm import get_llm
 from kgrag.logging import get_logger
+from kgrag.settings import effective_settings
 from kgrag.vectorstore import get_retriever
 
 logger = get_logger(__name__)
@@ -65,7 +65,7 @@ def retrieve_weighted(
     if not kb_weights:
         return retrieve(question, top_k=top_k, filter_expr=filter_expr)
 
-    s = get_settings()
+    s = effective_settings()
     k = top_k or s.retrieval_top_k
     reg = get_registry()
 
@@ -124,7 +124,7 @@ def answer(
     -------
     dict: ``{"answer": str, "sources": list[dict]}``
     """
-    s = get_settings()
+    s = effective_settings()
     if kb_weights:
         docs = retrieve_weighted(
             question, kb_weights, top_k=top_k, filter_expr=filter_expr

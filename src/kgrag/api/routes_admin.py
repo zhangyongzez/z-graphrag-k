@@ -13,13 +13,13 @@ from kgrag.api.deps import require_admin
 from kgrag.audit import recent as recent_audit
 from kgrag.audit import record as audit
 from kgrag.auth.service import User
-from kgrag.config import get_settings
 from kgrag.kb import collection_stats, get_registry
 from kgrag.logging import get_logger
 from kgrag.settings import (
     DEFAULT_CONFIG,
     RESTART_REQUIRED,
     config_schema,
+    effective_settings,
     public_config,
     reset_config,
     selected_model,
@@ -224,7 +224,8 @@ def _check_services(urls: dict[str, str], timeout: float = 1.0) -> dict[str, str
 @router.get("/dashboard")
 def admin_dashboard(admin: User = Depends(require_admin)) -> dict:
     """管理员看板：模型配置、服务地址、知识库全貌。"""
-    s = get_settings()
+    # 必须用运行时配置，否则配置页改的向量库 / 模型不会反映到看板
+    s = effective_settings()
     reg = get_registry()
 
     kbs = []
@@ -246,23 +247,26 @@ def admin_dashboard(admin: User = Depends(require_admin)) -> dict:
     vectorstore_uri = s.milvus_connection_uri
     llm_rec = selected_model("llm")
     emb_rec = selected_model("embedding")
-    llm_addr = (llm_rec or {}).get("base_url") or s.ollama_base_url or "—"
-    emb_addr = (emb_rec or {}).get("base_url") or (emb_rec or {}).get("path") or "—"
+    is_lite = s.vectorstore_provider == "lite"
 
-    # 并发探测，避免串行超时把看板拖到十几秒
+    # 只有真正配置了模型，才探测它的地址
+    llm_base = (llm_rec or {}).get("base_url", "")
+    llm_provider = (llm_rec or {}).get("provider", "")
+
+    # Ollama 只在有模型真正使用它时才探测
+    ollama_used = "ollama" in (
+        (llm_rec or {}).get("provider", ""),
+        (emb_rec or {}).get("provider", ""),
+    )
+
     checks = _check_services(
         {
+            # Milvus 服务端有 /healthz；Lite 是进程内嵌，无需探测
             "vectorstore": (
-                f"http://{s.milvus_uri.split('//')[-1]}/healthz"
-                if s.vectorstore_provider == "milvus"
-                else ""
+                f"http://{s.milvus_uri.split('//')[-1]}/healthz" if not is_lite else ""
             ),
-            "llm": (
-                (llm_rec or {}).get("base_url", "")
-                if (llm_rec or {}).get("provider") in ("openai", "ollama")
-                else ""
-            ),
-            "ollama": s.ollama_base_url,
+            "llm": llm_base if llm_provider in ("openai", "ollama") else "",
+            "ollama": s.ollama_base_url if ollama_used else "",
         }
     )
 
@@ -271,23 +275,46 @@ def admin_dashboard(admin: User = Depends(require_admin)) -> dict:
             "name": "API 服务",
             "address": f"http://{s.app_host}:{s.app_port}",
             "status": "ok",
+            "detail": "当前应用进程，提供 Web 与接口服务",
         },
         {
             "name": "向量库",
-            "address": vectorstore_uri,
-            "status": checks.get("vectorstore", "unknown"),
+            "address": (
+                f"{vectorstore_uri}（本地文件，随应用进程启动）"
+                if is_lite
+                else vectorstore_uri
+            ),
+            "status": "ok" if is_lite else checks.get("vectorstore", "unknown"),
+            "detail": (
+                "Milvus Lite：嵌入式向量库，没有独立服务，数据存为本地文件"
+                if is_lite
+                else "Milvus 服务端：独立进程，通过 gRPC 连接"
+            ),
         },
         {
             "name": "大模型",
-            "address": llm_addr,
-            "status": checks.get("llm", "unknown"),
-        },
-        {
-            "name": "Ollama",
-            "address": s.ollama_base_url,
-            "status": checks.get("ollama", "unknown"),
+            "address": (
+                f"{llm_rec['name']}（{llm_provider}）" if llm_rec else "未配置"
+            ),
+            "status": checks.get("llm", "unknown") if llm_rec else "unknown",
+            "detail": (
+                llm_base or "本地/官方默认地址"
+                if llm_rec
+                else "在「模型管理」中添加大模型并在「系统配置」中选择"
+            ),
         },
     ]
+
+    # Ollama 只在被使用时才显示
+    if ollama_used:
+        services.append(
+            {
+                "name": "Ollama",
+                "address": s.ollama_base_url,
+                "status": checks.get("ollama", "unknown"),
+                "detail": "本地模型服务，当前有模型正在使用",
+            }
+        )
 
     return {
         "models": {
@@ -297,13 +324,15 @@ def admin_dashboard(admin: User = Depends(require_admin)) -> dict:
                 "model": (emb_rec or {}).get("model") or s.embedding_model,
                 "device": s.embedding_device,
                 "dim": (emb_rec or {}).get("dim") or s.embedding_dim,
-                "address": emb_addr,
+                "address": (emb_rec or {}).get("base_url")
+                or (emb_rec or {}).get("path")
+                or "—",
             },
             "llm": {
                 "selected": llm_rec["name"] if llm_rec else None,
                 "provider": (llm_rec or {}).get("provider", s.llm_provider),
                 "model": (llm_rec or {}).get("model") or s.active_llm_model,
-                "address": llm_addr,
+                "address": (llm_rec or {}).get("base_url") or "—",
             },
             "vectorstore": {
                 "provider": s.vectorstore_provider,
@@ -330,7 +359,7 @@ def audit_log(limit: int = 100, admin: User = Depends(require_admin)) -> list[di
 @router.get("/paths")
 def server_paths(admin: User = Depends(require_admin)) -> dict:
     """服务器关键路径，便于排障。"""
-    s = get_settings()
+    s = effective_settings()
     return {
         "data_dir": s.data_dir,
         "upload_dir": s.upload_dir,
