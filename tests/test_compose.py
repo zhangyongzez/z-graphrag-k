@@ -25,3 +25,30 @@ def test_milvus_and_neo4j_have_profiles():
     data = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
     assert "milvus" in data["services"]["milvus"]["profiles"]
     assert "graph" in data["services"]["neo4j"]["profiles"]
+
+
+def test_app_service_exists():
+    """应用服务应包含在 compose 里，开箱即可 docker compose up。"""
+    root = Path(__file__).resolve().parents[1]
+    data = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert "app" in data["services"]
+    app = data["services"]["app"]
+    assert "build" in app
+    assert "8000" in str(app["ports"])
+    # 应用默认启动，不需要额外 profile
+    assert "profiles" not in app
+
+
+def test_app_uses_named_volume_for_data():
+    root = Path(__file__).resolve().parents[1]
+    data = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+    app = data["services"]["app"]
+    assert any("app_data" in v for v in app["volumes"])
+    assert "app_data" in data["volumes"]
+
+
+def test_dockerfile_runs_as_non_root():
+    """容器内不应以 root 运行。"""
+    root = Path(__file__).resolve().parents[1]
+    content = (root / "Dockerfile").read_text(encoding="utf-8")
+    assert "USER kgrag" in content or "USER " in content

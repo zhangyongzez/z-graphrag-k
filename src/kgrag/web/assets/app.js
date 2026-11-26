@@ -116,8 +116,15 @@ function enterApp() {
 async function loadHealth() {
   try {
     const h = await api("/health");
+    // 未在「模型管理」登记时明确提示，避免让人误以为已就绪
+    const emb = h.embedding_ready
+      ? `Embedding · ${esc(h.embedding)}`
+      : `<span style="color:var(--amber)">Embedding 未配置</span>`;
+    const llm = h.llm_ready
+      ? `LLM · ${esc(h.llm_model || h.llm)}`
+      : `<span style="color:var(--amber)">LLM 未配置</span>`;
     $("#sys-status").innerHTML =
-      `${h.vectorstore} · ${h.embedding}<br>${h.llm} · ${esc(h.llm_model || "-")}`;
+      `${esc(h.vectorstore)}<br>${emb}<br>${llm}`;
   } catch {
     $("#sys-status").textContent = "服务不可用";
   }

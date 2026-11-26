@@ -242,6 +242,18 @@ ADMIN_PASSWORD=你的密码
 
 ### 首次使用流程
 
+> **关于「开箱即用」**
+>
+> 系统启动后**开箱即可登录使用**，但**不能直接对话**——必须先配置模型。
+> 这是有意为之：Embedding 和 LLM 没有通用默认值，硬编码一个只会更让人困惑。
+>
+> 侧边栏底部的状态显示：
+> - <span>Milvus 未配置</span> → 灰字 `lite`，表示向量库已就绪
+> - <span>Embedding 未配置</span> → **黄色警告**，表示还没在「模型管理」登记模型
+> - <span>LLM 未配置</span> → **黄色警告**，同上
+>
+> 两个黄色警告消失，才说明系统真正可用。
+
 1. 用管理员登录
 2. 进入「**模型管理**」，新增 Embedding 模型和 LLM 模型
    - 本地模型：填目录路径（含 `config.json` + 权重文件）
@@ -249,6 +261,48 @@ ADMIN_PASSWORD=你的密码
 3. 进入「**系统配置**」，在下拉框中选择刚新增的模型
 4. 进入「**知识库**」，创建知识库并上传文档
 5. 进入「**对话**」，选择知识库和模型，开始提问
+
+### Docker 部署
+
+```bash
+# 1. 准备配置
+cp .env.example .env
+# 编辑 .env，至少设置 ADMIN_PASSWORD
+
+# 2. 启动（默认用 Milvus Lite，数据存在命名卷里）
+docker compose up -d --build
+
+# 3. 查看日志
+docker compose logs -f app
+
+# 4. 访问
+# http://localhost:8000
+```
+
+**常用组合**：
+
+```bash
+docker compose up -d                                  # 仅应用（Milvus Lite）
+docker compose --profile milvus up -d                 # 应用 + Milvus 服务端
+docker compose --profile graph up -d                  # 应用 + Neo4j
+docker compose --profile milvus --profile graph up -d # 全部
+```
+
+**数据持久化**：
+
+| 挂载点 | 内容 |
+|---|---|
+| `app_data:/app/data` | SQLite、向量库文件、日志、上传文件 |
+| `./models:/app/models:ro` | 本地 embedding 模型（可选，只读挂载） |
+
+**启用本地 embedding**（镜像会变大，含 torch）：
+
+```bash
+docker compose build --build-arg INSTALL_LOCAL=1
+docker compose up -d
+```
+
+> 容器内以非 root 用户 `kgrag` 运行；`app_data` 卷首次创建时权限已配好。
 
 ### 切换到 Milvus 服务端
 
@@ -259,9 +313,49 @@ docker compose --profile milvus up -d
 # 2. 确认健康
 docker compose --profile milvus ps
 
-# 3. 修改 .env
+# 3. 修改 .env（用 Docker 时 milvus 地址是容器名）
 VECTORSTORE_PROVIDER=milvus
-MILVUS_URI=http://localhost:19530
+MILVUS_URI=http://milvus:19530
+```
+
+不用 Docker 时，`MILVUS_URI` 填 `http://localhost:19530`。
+
+### Linux 直接部署
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[local,dev]"
+
+cp .env.example .env
+vim .env                        # 至少设置 ADMIN_PASSWORD
+
+chmod +x start.sh && ./start.sh
+```
+
+生产环境建议用 systemd 托管：
+
+```ini
+# /etc/systemd/system/kgrag.service
+[Unit]
+Description=z-graphrag-k
+After=network.target
+
+[Service]
+Type=simple
+User=kgrag
+WorkingDirectory=/opt/z-graphrag-k
+ExecStart=/opt/z-graphrag-k/.venv/bin/python start.py --no-browser
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now kgrag
 ```
 
 ### 命令行工具
