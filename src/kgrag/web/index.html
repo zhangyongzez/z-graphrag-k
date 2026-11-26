@@ -185,7 +185,10 @@
           <h1>模型管理</h1>
           <div class="sub">维护系统可用的 LLM 与 Embedding 模型；新增后可在「系统配置」中选择</div>
         </div>
-        <button class="btn btn-primary" id="btn-create-model">+ 新增模型</button>
+        <div class="row">
+          <button class="btn" id="btn-create-local-model">+ 本地 Embedding 模型</button>
+          <button class="btn btn-primary" id="btn-create-model">+ 新增模型</button>
+        </div>
       </div>
       <div class="tabs" id="model-tabs">
         <button class="tab active" data-kind="all">全部</button>

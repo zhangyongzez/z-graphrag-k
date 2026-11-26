@@ -946,19 +946,22 @@ function openModelModal(model) {
   modal({
     title: isEdit ? "编辑模型" : "新增模型",
     body: `
+      <div class="row" style="gap:12px;margin-bottom:4px">
+        <label class="field grow" style="margin-bottom:0"><span>类型 *</span>
+          <select class="select" id="mm-kind" ${isEdit ? "disabled" : ""}>
+            <option value="llm" ${m.kind === "llm" ? "selected" : ""}>大模型（LLM）</option>
+            <option value="embedding" ${m.kind === "embedding" ? "selected" : ""}>Embedding（向量化）</option>
+          </select>
+          <div class="field-hint" id="mm-kind-hint"></div></label>
+      </div>
+
       <label class="field"><span>名称 *</span>
         <input class="input" id="mm-name" value="${esc(m.name || "")}"
           placeholder="如 deepseek-chat、bge-m3"></label>
 
-      <div class="row" style="gap:12px">
-        <label class="field grow"><span>类型 *</span>
-          <select class="select" id="mm-kind" ${isEdit ? "disabled" : ""}>
-            <option value="llm" ${m.kind === "llm" ? "selected" : ""}>大模型（LLM）</option>
-            <option value="embedding" ${m.kind === "embedding" ? "selected" : ""}>Embedding</option>
-          </select></label>
-        <label class="field grow"><span>提供方 *</span>
-          <select class="select" id="mm-provider"></select></label>
-      </div>
+      <label class="field"><span>提供方 *</span>
+        <select class="select" id="mm-provider"></select>
+        <div class="field-hint" id="mm-provider-hint"></div></label>
 
       <div id="mm-conn"></div>
 
@@ -1055,6 +1058,19 @@ function openModelModal(model) {
     }
   };
 
+  const KIND_HINTS = {
+    llm: "大模型负责「生成回答」。不配置时对话会降级为纯检索模式。",
+    embedding: "Embedding 负责「检索」。本地模型需选择本地目录，是使用知识库的必需项。",
+  };
+  const PROVIDER_HINTS = {
+    anthropic: "Claude 官方接口，需 API Key。",
+    openai: "OpenAI 及所有兼容接口（DeepSeek / 通义 / 智谱 / vLLM / 公司网关）。",
+    ollama: "连接本机或远程的 Ollama 服务。",
+    local: "从服务器本地目录加载模型，离线可用，需包含 config.json 与权重文件。",
+    hash: "哈希占位，向量无语义，仅用于跑通链路。",
+    mock: "返回固定文本，不调用真实模型，仅用于测试。",
+  };
+
   const fillProviders = () => {
     const kind = kindSel.value;
     const providers = kind === "llm"
@@ -1064,15 +1080,22 @@ function openModelModal(model) {
       `<option value="${p}" ${p === m.provider ? "selected" : ""}>${PROVIDER_LABELS[p] || p}</option>`
     ).join("");
     if (!providers.includes(m.provider)) provSel.value = providers[0];
+    $("#mm-kind-hint").textContent = KIND_HINTS[kind] || "";
     renderConn();
   };
 
   kindSel.addEventListener("change", fillProviders);
-  provSel.addEventListener("change", renderConn);
+  provSel.addEventListener("change", () => {
+    $("#mm-provider-hint").textContent = PROVIDER_HINTS[provSel.value] || "";
+    renderConn();
+  });
   fillProviders();
+  $("#mm-provider-hint").textContent = PROVIDER_HINTS[provSel.value] || "";
 }
 
 $("#btn-create-model").addEventListener("click", () => openModelModal(null));
+$("#btn-create-local-model").addEventListener("click", () =>
+  openModelModal({ kind: "embedding", provider: "local" }));
 
 $$("#model-tabs [data-kind]").forEach((b) => {
   b.addEventListener("click", () => {
