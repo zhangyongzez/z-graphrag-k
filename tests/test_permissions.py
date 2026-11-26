@@ -305,3 +305,52 @@ def test_admin_password_not_changed_when_env_empty(client, monkeypatch):
 
     after = query_one("SELECT password_hash FROM users WHERE role = 'admin'")["password_hash"]
     assert after == before
+
+
+# --------------------------------------------------------------------------- #
+# 未配置 LLM 时的纯检索降级
+# --------------------------------------------------------------------------- #
+def test_chat_retrieval_only_without_llm(admin_client, tmp_path):
+    """未配置 LLM 时，对话应降级为返回检索片段，而不是报错。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+
+    # 确保没有选中 LLM
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": ""}})
+
+    kb = admin_client.post("/api/kb", json={"name": "检索降级测试库"}).json()
+    f = tmp_path / "doc.md"
+    f.write_text("# 退货政策\n\n七天无理由退货。\n", encoding="utf-8")
+    with open(f, "rb") as fh:
+        admin_client.post(
+            f"/api/kb/{kb['id']}/upload",
+            files=[("files", ("doc.md", fh, "text/markdown"))],
+        )
+
+    r = admin_client.post("/api/chat", json={"question": "退货", "kb_id": kb["id"]})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["retrieval_only"] is True
+    assert data["sources"]
+    assert "未配置大模型" in data["answer"]
+    assert "七天无理由退货" in data["answer"]
+
+
+def test_chat_uses_llm_when_configured(admin_client):
+    """配置了 LLM 后，retrieval_only 应为 False。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    m = admin_client.post(
+        "/api/admin/models",
+        json={
+            "name": "mock-llm-for-test",
+            "kind": "llm",
+            "provider": "mock",
+        },
+    ).json()
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": m["id"]}})
+
+    r = admin_client.post("/api/chat", json={"question": "测试"})
+    assert r.status_code == 200
+    assert r.json()["retrieval_only"] is False
+
+    # 清理，避免影响后续测试
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": ""}})

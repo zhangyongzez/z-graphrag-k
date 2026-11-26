@@ -34,7 +34,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function modal({ title, body, okText = "确定", onOk, danger = false }) {
+function modal({ title, body, okText = "确定", cancelText = "取消", onOk, onCancel, danger = false }) {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
@@ -42,14 +42,18 @@ function modal({ title, body, okText = "确定", onOk, danger = false }) {
       <h3>${esc(title)}</h3>
       <div id="modal-body">${body}</div>
       <div class="modal-actions">
-        <button class="btn" id="modal-cancel">取消</button>
+        <button class="btn" id="modal-cancel">${esc(cancelText)}</button>
         <button class="btn ${danger ? "btn-danger" : "btn-primary"}" id="modal-ok">${esc(okText)}</button>
       </div>
     </div>`;
   document.body.appendChild(mask);
   const close = () => mask.remove();
-  $("#modal-cancel", mask).onclick = close;
-  mask.onclick = (e) => { if (e.target === mask) close(); };
+  const cancel = () => {
+    onCancel?.();
+    close();
+  };
+  $("#modal-cancel", mask).onclick = cancel;
+  mask.onclick = (e) => { if (e.target === mask) cancel(); };
   $("#modal-ok", mask).onclick = async () => {
     try {
       const keep = await onOk(mask);
@@ -111,6 +115,61 @@ function enterApp() {
   $$(".admin-only").forEach((el) => el.classList.toggle("hidden", !isAdmin()));
   show("dashboard");
   loadHealth();
+  maybeShowSetupGuide();
+}
+
+/* 首次使用引导：管理员登录且模型未配置时弹出 */
+async function maybeShowSetupGuide() {
+  if (!isAdmin()) return;
+  if (localStorage.getItem("kgrag_setup_dismissed") === "1") return;
+  try {
+    const h = await api("/health");
+    if (h.embedding_ready && h.llm_ready) return;
+
+    const missing = [];
+    if (!h.embedding_ready) missing.push("Embedding 模型（用于文档检索）");
+    if (!h.llm_ready) missing.push("大模型（用于生成回答）");
+
+    const mask = modal({
+      title: "开始使用",
+      body: `
+        <div class="muted" style="margin-bottom:16px;line-height:1.8">
+          系统已就绪，但还需要配置模型才能使用完整功能。
+        </div>
+        <div class="card" style="background:var(--bg);margin-bottom:14px">
+          <div style="margin-bottom:10px"><strong>还缺少：</strong></div>
+          ${missing.map((m) => `<div style="padding:4px 0">· ${esc(m)}</div>`).join("")}
+        </div>
+        <div class="muted" style="font-size:13px;line-height:1.9">
+          <strong style="color:var(--text)">配置步骤</strong><br>
+          1. 进入「模型管理」，点「+ 新增模型」<br>
+          2. 选择类型和提供方，填入地址 / 密钥 / 路径<br>
+          3. 到「系统配置」下拉选中刚加的模型<br>
+          <br>
+          <span style="color:var(--amber)">
+            未配置大模型时，对话会降级为「纯检索模式」——直接返回匹配的原文片段。
+          </span>
+        </div>
+        <label class="row" style="margin-top:16px;gap:8px;cursor:pointer">
+          <input type="checkbox" id="setup-skip">
+          <span class="muted" style="font-size:13px">不再提示</span>
+        </label>`,
+      okText: "去配置",
+      cancelText: "稍后",
+      onOk: () => {
+        if ($("#setup-skip")?.checked) {
+          localStorage.setItem("kgrag_setup_dismissed", "1");
+        }
+        show("models");
+      },
+      onCancel: () => {
+        if ($("#setup-skip")?.checked) {
+          localStorage.setItem("kgrag_setup_dismissed", "1");
+        }
+      },
+    });
+    void mask;
+  } catch { /* 忽略 */ }
 }
 
 async function loadHealth() {
@@ -648,6 +707,10 @@ async function sendChat() {
 
         if (ev === "sources") {
           sources = data.sources || [];
+        } else if (ev === "retrieval_only") {
+          // 未配置大模型，回答来自原文片段
+          bubble.dataset.retrievalOnly = "1";
+          bubble.querySelector(".avatar").textContent = "检";
         } else if (ev === "delta") {
           answer += data.text;
           bubble.querySelector(".bubble").textContent = answer;
@@ -658,7 +721,8 @@ async function sendChat() {
       }
     }
 
-    bubble.querySelector(".avatar").textContent = "AI";
+    bubble.querySelector(".avatar").textContent =
+      bubble.dataset.retrievalOnly ? "检" : "AI";
     if (sources.length) {
       const det = document.createElement("details");
       det.className = "sources";

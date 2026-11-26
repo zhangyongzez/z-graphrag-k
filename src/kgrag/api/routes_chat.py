@@ -57,6 +57,8 @@ class SourceOut(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceOut]
+    # 未配置 LLM 时降级为纯检索，answer 是原文片段而非模型生成
+    retrieval_only: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -174,10 +176,49 @@ def _source_dicts(docs) -> list[dict]:
     ]
 
 
+def _build_sources(docs) -> list[dict]:
+    return [
+        {
+            "filename": d.metadata.get("filename"),
+            "source": d.metadata.get("source"),
+            "chunk_index": d.metadata.get("chunk_index"),
+            "score": d.metadata.get("score"),
+            "weighted_score": d.metadata.get("weighted_score"),
+            "kb_id": d.metadata.get("kb_id"),
+            "kb_name": d.metadata.get("kb_name"),
+            "preview": d.page_content[:200],
+        }
+        for d in docs
+    ]
+
+
+def _llm_ready() -> bool:
+    """是否已配置可用的 LLM（模型管理里选中了模型）。"""
+    from kgrag.settings import selected_model
+
+    return selected_model("llm") is not None
+
+
 @router.post("", response_model=ChatResponse)
 def chat(req: ChatRequest, user: User = Depends(current_user)) -> ChatResponse:
     weights = _filtered_weights(req, user)
     collection = None if weights else _resolve_collection(req.kb_id, user)
+
+    # 未配置 LLM 时降级为「纯检索」：返回命中的原文片段，不做生成
+    if not _llm_ready():
+        docs = (
+            retrieve_weighted(req.question, weights, top_k=req.top_k)
+            if weights
+            else retrieve(req.question, top_k=req.top_k, collection=collection)
+        )
+        sources = _build_sources(docs)
+        answer = _format_retrieval_only(docs)
+        if req.conversation_id:
+            _owned_conversation(req.conversation_id, user)
+            conv.add_message(req.conversation_id, "user", req.question)
+            conv.add_message(req.conversation_id, "assistant", answer, sources)
+        return ChatResponse(answer=answer, sources=sources, retrieval_only=True)
+
     try:
         result = rag_answer(
             req.question,
@@ -197,6 +238,20 @@ def chat(req: ChatRequest, user: User = Depends(current_user)) -> ChatResponse:
         conv.add_message(req.conversation_id, "assistant", result["answer"],
                          result.get("sources"))
     return ChatResponse(**result)
+
+
+def _format_retrieval_only(docs) -> str:
+    """未配置 LLM 时的回答：直接返回命中的原文片段。"""
+    if not docs:
+        return "没有检索到相关内容。\n\n（当前未配置大模型，仅展示检索结果。"
+    lines = [
+        f"未配置大模型，以下是检索到的 {len(docs)} 条相关片段：\n"
+    ]
+    for i, d in enumerate(docs, 1):
+        src = d.metadata.get("filename") or "未知来源"
+        lines.append(f"【{i}】{src}\n{d.page_content.strip()}\n")
+    lines.append("提示：在「模型管理」中添加大模型并在「系统配置」中选择后，可获得总结性回答。")
+    return "\n".join(lines)
 
 
 @router.post("/stream")
@@ -224,6 +279,17 @@ def chat_stream(req: ChatRequest, user: User = Depends(current_user)) -> Streami
                 docs = retrieve(req.question, top_k=req.top_k, collection=collection)
             sources = _source_dicts(docs)
             yield _sse("sources", {"sources": sources})
+
+            # 未配置 LLM：降级为纯检索，直接把片段流式吐出来
+            if not _llm_ready():
+                text = _format_retrieval_only(docs)
+                yield _sse("retrieval_only", {"enabled": True})
+                yield _sse("delta", {"text": text})
+                yield _sse("done", {})
+                if conv_id:
+                    conv.add_message(conv_id, "user", req.question)
+                    conv.add_message(conv_id, "assistant", text, sources)
+                return
 
             from langchain_core.messages import HumanMessage, SystemMessage
 
