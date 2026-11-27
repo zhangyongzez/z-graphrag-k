@@ -190,6 +190,29 @@ def check_provider_mismatch(provider: str, model: str) -> str | None:
     return None
 
 
+def check_api_key(api_key: str, base_url: str) -> str | None:
+    """检查 API Key 填得对不对，返回错误文本或 None。
+
+    最常见的错误是把地址填进 Key 字段，导致网关返回
+    ``Invalid token``，很难自己发现。
+    """
+    key = (api_key or "").strip()
+    if not key:
+        return None  # 空值由各 provider 自己判断
+
+    low = key.lower()
+    if low.startswith(("http://", "https://")):
+        return (
+            f"API Key 填的是网址（{key[:40]}），不是密钥。"
+            "请填写服务商提供的 token，例如 sk-xxxx。"
+        )
+    if base_url and key.rstrip("/") == base_url.rstrip("/"):
+        return "API Key 与 API 地址相同，请填写真正的密钥。"
+    if " " in key:
+        return "API Key 中不能包含空格，请检查是否复制多行。"
+    return None
+
+
 def create_model(
     *,
     name: str,
@@ -206,6 +229,11 @@ def create_model(
     if not name:
         raise ValueError("模型名称不能为空")
     _validate(kind, provider)
+
+    # API Key 填错（比如填成地址）是硬错误，直接拒绝
+    key_err = check_api_key(api_key, base_url)
+    if key_err:
+        raise ValueError(key_err)
 
     if query_one("SELECT id FROM models WHERE name = ?", (name,)):
         raise ValueError(f"模型名称已存在: {name}")

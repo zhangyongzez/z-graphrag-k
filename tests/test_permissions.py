@@ -406,3 +406,54 @@ def test_dashboard_reflects_selected_model(admin_client):
     assert stats["llm_provider"] == "mock"
 
     admin_client.put("/api/admin/config", json={"values": {"llm_model_id": ""}})
+
+
+def test_api_key_must_not_be_url(admin_client):
+    """API Key 填成网址时应拒绝保存。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    r = admin_client.post(
+        "/api/admin/models",
+        json={
+            "name": "bad-key-test",
+            "kind": "llm",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "http://aihub-api.example.com:30080",
+        },
+    )
+    assert r.status_code == 400
+    assert "网址" in r.json()["detail"]
+
+
+def test_api_key_must_not_equal_base_url(admin_client):
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    url = "https://api.example.com/v1"
+    r = admin_client.post(
+        "/api/admin/models",
+        json={
+            "name": "same-key-test",
+            "kind": "llm",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "base_url": url,
+            "api_key": url,
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_api_key_with_space_rejected(admin_client):
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    r = admin_client.post(
+        "/api/admin/models",
+        json={
+            "name": "space-key-test",
+            "kind": "llm",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-abc def",
+        },
+    )
+    assert r.status_code == 400
