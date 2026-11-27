@@ -76,6 +76,8 @@ const state = {
   chatHistory: [],
   models: [],
   modelKind: "all",
+  // 「系统配置」里选中的 LLM，会话未指定模型时回退到它
+  defaultLlmId: "",
   configSchema: null,
   configDefaults: {},
   adminDash: null,
@@ -498,21 +500,49 @@ async function uploadFiles(files) {
 
 /* ------------------------------------------------------------------ 对话 */
 async function loadChat() {
-  await Promise.all([loadConversations(), loadChatKbs(), loadModelOptions()]);
+  // 三个加载互不依赖，任一失败都不能拖垮其它（否则下拉框会空白）
+  await Promise.all([
+    loadConversations(),
+    loadChatKbs(),
+    loadModelOptions(),
+  ]);
   if (state.conversations.length && !state.currentConv) {
     openConversation(state.conversations[0].id);
   }
 }
 
+/* 对话页左侧的「知识库权重」需要全量知识库清单 */
+async function loadChatKbs() {
+  try {
+    state.kbs = await api("/api/kb");
+    const el = $("#chat-kb-weights");
+    if (el) renderKbWeights(state.currentConv?.kb_weights || []);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
 async function loadModelOptions() {
   try {
-    const h = await api("/health");
-    const models = await api("/api/models?kind=llm").catch(() => []);
+    const [h, models] = await Promise.all([
+      api("/health"),
+      api("/api/models?kind=llm").catch(() => []),
+    ]);
     const sel = $("#chat-model");
-    const current = h.llm_model || "-";
-    sel.innerHTML = `<option value="">跟随系统配置（${esc(current)}）</option>` +
-      models.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}（${esc(m.provider)}）</option>`).join("");
-  } catch { /* ignore */ }
+    if (!sel) return;
+    if (!models.length) {
+      sel.innerHTML = `<option value="">（未登记模型，请到「模型管理」新增）</option>`;
+      return;
+    }
+    // 只列真实模型；默认选中「系统配置」里指定的那个，避免出现两个指向同一模型的选项
+    sel.innerHTML = models.map((m) =>
+      `<option value="${esc(m.id)}">${esc(m.name)}（${esc(m.provider)}）</option>`
+    ).join("");
+    state.defaultLlmId = h.llm_model_id || models[0].id;
+    sel.value = state.defaultLlmId;
+  } catch (e) {
+    toast(e.message, "err");
+  }
 }
 
 async function loadConversations() {
@@ -568,7 +598,8 @@ async function openConversation(id) {
     $("#chat-title").textContent = c.title || "对话";
     $("#chat-sub").textContent =
       c.kb_weights.length ? `关联 ${c.kb_weights.length} 个知识库` : "未选择知识库";
-    $("#chat-model").value = c.llm_model || "";
+    // 会话没存模型时，回退到「系统配置」里选中的那个，避免下拉框空白
+    $("#chat-model").value = c.llm_model || state.defaultLlmId;
     renderConvList();
     renderMessages(c.messages);
     renderKbWeights(c.kb_weights);
@@ -639,10 +670,25 @@ $("#btn-new-conv").addEventListener("click", async () => {
   try {
     const c = await api("/api/chat/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "新对话" }),
+      body: JSON.stringify({ title: "新对话", llm_model: state.defaultLlmId }),
     });
     state.conversations.unshift(c);
     await openConversation(c.id);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+});
+
+/* 切换大模型：立即写回当前会话，避免切走再切回时丢失选择 */
+$("#chat-model").addEventListener("change", async () => {
+  if (!state.currentConv) return;
+  const modelId = $("#chat-model").value;
+  try {
+    await api(`/api/chat/conversations/${state.currentConv.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ llm_model: modelId }),
+    });
+    state.currentConv.llm_model = modelId;
   } catch (e) {
     toast(e.message, "err");
   }
@@ -1038,10 +1084,14 @@ function openModelModal(model, defaults) {
         });
         toast("已保存", "ok");
       } else {
-        await api("/api/admin/models", {
+        const created = await api("/api/admin/models", {
           method: "POST", body: JSON.stringify(payload),
         });
-        toast("已新增，可在「系统配置」中选择", "ok");
+        if (created?.warning) {
+          toast(created.warning, "err");
+        } else {
+          toast("已新增，可在「系统配置」中选择", "ok");
+        }
       }
       loadModels();
     },

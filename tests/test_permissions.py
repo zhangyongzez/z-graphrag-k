@@ -354,3 +354,55 @@ def test_chat_uses_llm_when_configured(admin_client):
 
     # 清理，避免影响后续测试
     admin_client.put("/api/admin/config", json={"values": {"llm_model_id": ""}})
+
+
+# --------------------------------------------------------------------------- #
+# 模型名与提供方匹配检查
+# --------------------------------------------------------------------------- #
+def test_provider_mismatch_warning(admin_client):
+    """用 Anthropic 协议配 DeepSeek 模型名时应给出警告。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    r = admin_client.post(
+        "/api/admin/models",
+        json={
+            "name": "mismatch-test",
+            "kind": "llm",
+            "provider": "anthropic",
+            "model": "deepseek-chat",
+            "base_url": "http://example.com",
+        },
+    )
+    assert r.status_code == 201
+    assert "warning" in r.json()
+    assert "openai" in r.json()["warning"]
+
+
+def test_no_warning_when_provider_matches(admin_client):
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    r = admin_client.post(
+        "/api/admin/models",
+        json={
+            "name": "match-test",
+            "kind": "llm",
+            "provider": "openai",
+            "model": "deepseek-chat",
+            "base_url": "http://example.com",
+        },
+    )
+    assert r.status_code == 201
+    assert "warning" not in r.json()
+
+
+def test_dashboard_reflects_selected_model(admin_client):
+    """看板应显示选中的模型，而不是 .env 默认值。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    m = admin_client.post(
+        "/api/admin/models",
+        json={"name": "dash-model", "kind": "llm", "provider": "mock"},
+    ).json()
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": m["id"]}})
+
+    stats = admin_client.get("/api/kb/stats/dashboard").json()
+    assert stats["llm_provider"] == "mock"
+
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": ""}})

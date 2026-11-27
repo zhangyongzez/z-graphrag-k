@@ -79,6 +79,8 @@ class HealthResponse(BaseModel):
     # 当前是否已在「模型管理」中登记并选中模型；false 表示回退到 .env 默认值
     embedding_ready: bool = False
     llm_ready: bool = False
+    # 「系统配置」里选中的 LLM 记录 id，供对话页下拉框预选
+    llm_model_id: str = ""
 
 
 class IngestRequest(BaseModel):
@@ -137,6 +139,7 @@ def health() -> HealthResponse:
         llm_model=(llm_rec or {}).get("model") or s.active_llm_model,
         embedding_ready=emb_rec is not None,
         llm_ready=llm_rec is not None,
+        llm_model_id=(llm_rec or {}).get("id", ""),
     )
 
 

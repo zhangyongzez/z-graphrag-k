@@ -128,7 +128,9 @@ def create_model(req: ModelCreate, admin: User = Depends(require_admin)) -> dict
         raise HTTPException(400, str(e)) from e
     audit(admin.id, admin.username, "model.create", target=req.name,
           detail=f"{req.kind}/{req.provider}")
-    return m
+    # 附带「模型名与提供方可能不匹配」的提示，不阻止保存
+    warn = model_store.check_provider_mismatch(req.provider, req.model)
+    return {**m, "warning": warn} if warn else m
 
 
 @router.patch("/models/{model_id}")

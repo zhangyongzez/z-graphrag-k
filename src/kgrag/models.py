@@ -161,6 +161,35 @@ def _validate(kind: str, provider: str, **fields) -> None:
         )
 
 
+# 模型名前缀 -> 实际需要的 provider。用于提前发现「用 Anthropic 协议调 DeepSeek」这类错配。
+_MODEL_PROVIDER_HINTS = {
+    "deepseek": "openai",
+    "qwen": "openai",
+    "glm": "openai",
+    "moonshot": "openai",
+    "gpt-": "openai",
+    "o1-": "openai",
+    "claude-": "anthropic",
+}
+
+
+def check_provider_mismatch(provider: str, model: str) -> str | None:
+    """检查模型名与提供方是否明显不匹配，返回警告文本或 None。
+
+    只在「明显错误」时提醒，不阻止保存——有些网关会用自定义命名。
+    """
+    if not model:
+        return None
+    lower = model.lower()
+    for prefix, expected in _MODEL_PROVIDER_HINTS.items():
+        if lower.startswith(prefix) and provider != expected:
+            return (
+                f"模型名「{model}」通常对应 {expected} 协议，"
+                f"但你选择的是 {provider}。如果这是公司网关的自定义模型，可忽略此提示。"
+            )
+    return None
+
+
 def create_model(
     *,
     name: str,

@@ -341,13 +341,19 @@ def dashboard(user: User = Depends(current_user)) -> DashboardStats:
         total_chunks += stats["row_count"]
         docs.update(d["filename"] for d in stats["documents"])
 
+    # 必须反映「系统配置里选中的模型」，否则看板和侧边栏会显示不一致
+    from kgrag.settings import selected_model
+
+    llm_rec = selected_model("llm")
+    emb_rec = selected_model("embedding")
+
     return DashboardStats(
         kb_count=len(kbs),
         total_chunks=total_chunks,
         total_documents=len(docs),
-        embedding_provider=s.embedding_provider,
-        embedding_dim=s.embedding_dim,
+        embedding_provider=(emb_rec or {}).get("provider") or s.embedding_provider,
+        embedding_dim=(emb_rec or {}).get("dim") or s.embedding_dim,
         vectorstore_provider=s.vectorstore_provider,
-        llm_provider=s.llm_provider,
-        llm_model=s.active_llm_model,
+        llm_provider=(llm_rec or {}).get("provider") or s.llm_provider,
+        llm_model=(llm_rec or {}).get("model") or s.active_llm_model,
     )
