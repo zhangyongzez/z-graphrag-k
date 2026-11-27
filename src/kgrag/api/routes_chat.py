@@ -59,6 +59,8 @@ class ChatResponse(BaseModel):
     sources: list[SourceOut]
     # 未配置 LLM 时降级为纯检索，answer 是原文片段而非模型生成
     retrieval_only: bool = False
+    # 模型的推理过程（thinking 模型才有），前端可折叠展示
+    reasoning: str = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -235,8 +237,10 @@ def chat(req: ChatRequest, user: User = Depends(current_user)) -> ChatResponse:
     if req.conversation_id:
         _owned_conversation(req.conversation_id, user)
         conv.add_message(req.conversation_id, "user", req.question)
-        conv.add_message(req.conversation_id, "assistant", result["answer"],
-                         result.get("sources"))
+        conv.add_message(
+            req.conversation_id, "assistant", result["answer"],
+            result.get("sources"), result.get("reasoning", ""),
+        )
     return ChatResponse(**result)
 
 
@@ -305,8 +309,16 @@ def chat_stream(req: ChatRequest, user: User = Depends(current_user)) -> Streami
                 if cls:
                     messages.insert(-1, cls(content=m.content))
             llm = get_llm(model_id=req.llm_model) if req.llm_model else get_llm()
+            from kgrag.retrieval.rag import _extract_reasoning, _extract_text
+
+            reasoning = ""
             for chunk in llm.stream(messages):
-                text = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
+                # 部分模型会返回 thinking + text 内容块，分开推送
+                think = _extract_reasoning(chunk.content)
+                if think:
+                    reasoning += think
+                    yield _sse("reasoning", {"text": think})
+                text = _extract_text(chunk.content)
                 if text:
                     answer += text
                     yield _sse("delta", {"text": text})
@@ -314,7 +326,7 @@ def chat_stream(req: ChatRequest, user: User = Depends(current_user)) -> Streami
 
             if conv_id:
                 conv.add_message(conv_id, "user", req.question)
-                conv.add_message(conv_id, "assistant", answer, sources)
+                conv.add_message(conv_id, "assistant", answer, sources, reasoning)
         except Exception as e:  # noqa: BLE001
             logger.exception("流式问答失败")
             yield _sse("error", {"message": str(e)})

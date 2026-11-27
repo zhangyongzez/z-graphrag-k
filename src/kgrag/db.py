@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role            TEXT NOT NULL,   -- user | assistant
     content         TEXT NOT NULL,
     sources         TEXT DEFAULT '[]',
+    reasoning       TEXT DEFAULT '',  -- 模型的推理过程（thinking 模型才有）
     created_at      TEXT NOT NULL,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
@@ -165,6 +166,7 @@ def _conn() -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
         _local.conn = conn
     return conn
@@ -186,8 +188,21 @@ def init_db() -> None:
     conn = _conn()
     with _write_lock:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     logger.info(f"数据库就绪: {db_path()}")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """为已存在的库补齐新增列（SQLite 的 ADD COLUMN 是幂等的）。"""
+    migrations = [
+        ("messages", "reasoning", "TEXT DEFAULT ''"),
+    ]
+    for table, column, ddl in migrations:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            logger.info(f"数据库迁移: {table}.{column} 已添加")
 
 
 def query(sql: str, params: tuple = ()) -> list[sqlite3.Row]:

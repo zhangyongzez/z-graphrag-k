@@ -59,3 +59,48 @@ def test_invalid_provider_rejected():
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, vectorstore_provider="not-a-provider")
+
+
+def test_extract_text_handles_content_blocks():
+    """部分模型返回 thinking + text 内容块，应只取正文。"""
+    from kgrag.retrieval.rag import _extract_text
+
+    # 纯字符串
+    assert _extract_text("你好") == "你好"
+    # 内容块列表（DeepSeek / Claude thinking 模式）
+    blocks = [
+        {"type": "thinking", "thinking": "推理过程"},
+        {"type": "text", "text": "真正的回答"},
+    ]
+    assert _extract_text(blocks) == "真正的回答"
+    # 多个 text 块
+    assert _extract_text([{"type": "text", "text": "A"}, {"type": "text", "text": "B"}]) == "A\nB"
+    # 空列表
+    assert _extract_text([]) == ""
+
+
+def test_extract_reasoning():
+    """thinking 块应被单独取出。"""
+    from kgrag.retrieval.rag import _extract_reasoning
+
+    blocks = [
+        {"type": "thinking", "thinking": "让我想想"},
+        {"type": "text", "text": "回答"},
+    ]
+    assert _extract_reasoning(blocks) == "让我想想"
+    assert _extract_reasoning("纯文本") == ""
+    assert _extract_reasoning([]) == ""
+    # 没有 thinking 块
+    assert _extract_reasoning([{"type": "text", "text": "x"}]) == ""
+
+
+def test_extract_text_ignores_thinking():
+    """正文提取应排除 thinking。"""
+    from kgrag.retrieval.rag import _extract_text
+
+    blocks = [
+        {"type": "thinking", "thinking": "推理"},
+        {"type": "text", "text": "回答"},
+    ]
+    assert _extract_text(blocks) == "回答"
+    assert "推理" not in _extract_text(blocks)

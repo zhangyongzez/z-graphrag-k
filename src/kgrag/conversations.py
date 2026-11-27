@@ -104,17 +104,20 @@ def add_message(
     role: str,
     content: str,
     sources: list[dict] | None = None,
+    reasoning: str = "",
 ) -> str:
     mid = uuid.uuid4().hex
     execute(
-        """INSERT INTO messages(id, conversation_id, role, content, sources, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO messages(id, conversation_id, role, content, sources,
+                               reasoning, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
             mid,
             conv_id,
             role,
             content,
             json.dumps(sources or [], ensure_ascii=False),
+            reasoning,
             _now(),
         ),
     )

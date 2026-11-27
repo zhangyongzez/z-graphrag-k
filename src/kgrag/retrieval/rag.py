@@ -156,4 +156,51 @@ def answer(
         }
         for d in docs
     ]
-    return {"answer": resp.content, "sources": sources}
+    return {"answer": _extract_text(resp.content), "sources": sources,
+            "reasoning": _extract_reasoning(resp.content)}
+
+
+def _extract_text(content) -> str:
+    """从 LangChain 返回的 content 中取出正文。
+
+    多数模型返回 str，但部分模型（如带 thinking 的 DeepSeek / Claude）
+    会返回内容块列表，形如::
+
+        [{"type": "thinking", "thinking": "..."},
+         {"type": "text", "text": "真正的回答"}]
+
+    这里只取 text 块；推理过程由 :func:`_extract_reasoning` 单独取出。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text" and block.get("text"):
+                    parts.append(block["text"])
+            elif hasattr(block, "text"):
+                parts.append(str(block.text))
+        return "\n".join(parts).strip()
+    return str(content)
+
+
+def _extract_reasoning(content) -> str:
+    """取出模型的推理过程（thinking 块），没有则返回空串。"""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "thinking" and block.get("thinking"):
+                parts.append(str(block["thinking"]))
+        else:
+            # pydantic 对象形式
+            btype = getattr(block, "type", None)
+            if btype == "thinking":
+                text = getattr(block, "thinking", "") or getattr(block, "text", "")
+                if text:
+                    parts.append(str(text))
+    return "\n".join(parts).strip()

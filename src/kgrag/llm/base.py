@@ -83,7 +83,14 @@ def _build_llm(s: Settings, record: dict | None = None) -> BaseChatModel:
             "timeout": s.llm_timeout,
         }
         if base_url:
-            kwargs["base_url"] = base_url
+            # Anthropic SDK 会自动拼 /v1/messages，base_url 带了 /v1 会变成
+            # /v1/v1/messages。这里去掉，兼容用户按 OpenAI 习惯填 /v1 的情况。
+            kwargs["base_url"] = base_url.rstrip("/").removesuffix("/v1")
+            # 自建网关（Higress / 阿里云 MSE 等）常只认
+            # ``Authorization: Bearer <token>``，而 Anthropic SDK 默认发
+            # ``x-api-key``，会得到 401「Only Bearer token is supported」。
+            # 用 default_headers 同时带上 Bearer，兼容两种校验方式。
+            kwargs["default_headers"] = {"Authorization": f"Bearer {api_key}"}
         return ChatAnthropic(**kwargs)
 
     if provider == "ollama":

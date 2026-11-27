@@ -614,7 +614,7 @@ function renderMessages(messages) {
   log.innerHTML = "";
   messages.forEach((m) => {
     if (m.role === "user") appendMsg("user", m.content);
-    else appendMsg("assistant", m.content, m.sources);
+    else appendMsg("assistant", m.content, m.sources, m.reasoning);
   });
   log.scrollTop = log.scrollHeight;
 }
@@ -708,7 +708,7 @@ chatInput.addEventListener("keydown", (e) => {
 });
 $("#btn-send").addEventListener("click", sendChat);
 
-function appendMsg(role, text, sources) {
+function appendMsg(role, text, sources, reasoning) {
   const log = $("#chat-log");
   const empty = log.querySelector(".empty");
   if (empty) empty.remove();
@@ -718,7 +718,18 @@ function appendMsg(role, text, sources) {
   div.innerHTML = `
     <div class="avatar">${role === "user" ? "我" : "AI"}</div>
     <div class="bubble"></div>`;
-  div.querySelector(".bubble").textContent = text;
+  const bubble = div.querySelector(".bubble");
+
+  // 推理过程：折叠展示在正文之前
+  if (reasoning) {
+    bubble.appendChild(buildReasoning(reasoning));
+  }
+
+  const body = document.createElement("div");
+  body.className = "msg-body";
+  body.textContent = text;
+  bubble.appendChild(body);
+
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 
@@ -728,9 +739,18 @@ function appendMsg(role, text, sources) {
     det.innerHTML = `<summary>引用 ${sources.length} 条资料</summary><ul>${
       sources.map((s) => `<li>${esc(s.filename || "?")} — ${esc((s.preview || "").slice(0, 70))}</li>`).join("")
     }</ul>`;
-    div.querySelector(".bubble").appendChild(det);
+    bubble.appendChild(det);
   }
   return div;
+}
+
+/* 推理过程区块（可折叠） */
+function buildReasoning(text) {
+  const det = document.createElement("details");
+  det.className = "reasoning";
+  det.innerHTML = `<summary>💭 推理过程</summary><div class="reasoning-body"></div>`;
+  det.querySelector(".reasoning-body").textContent = text;
+  return det;
 }
 
 async function sendChat() {
@@ -775,6 +795,7 @@ async function sendChat() {
     const decoder = new TextDecoder();
     let buf = "";
     let answer = "";
+    let reasoning = "";
     let sources = [];
 
     while (true) {
@@ -797,9 +818,24 @@ async function sendChat() {
           // 未配置大模型，回答来自原文片段
           bubble.dataset.retrievalOnly = "1";
           bubble.querySelector(".avatar").textContent = "检";
+        } else if (ev === "reasoning") {
+          reasoning += data.text;
+          let det = bubble.querySelector(".reasoning");
+          if (!det) {
+            det = buildReasoning("");
+            bubble.querySelector(".bubble").prepend(det);
+          }
+          det.querySelector(".reasoning-body").textContent = reasoning;
+          $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
         } else if (ev === "delta") {
           answer += data.text;
-          bubble.querySelector(".bubble").textContent = answer;
+          let body = bubble.querySelector(".msg-body");
+          if (!body) {
+            body = document.createElement("div");
+            body.className = "msg-body";
+            bubble.querySelector(".bubble").appendChild(body);
+          }
+          body.textContent = answer;
           $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
         } else if (ev === "error") {
           throw new Error(data.message);
