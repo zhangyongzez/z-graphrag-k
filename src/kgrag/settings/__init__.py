@@ -457,8 +457,12 @@ def _invalidate(changed: list[str]) -> None:
 
 
 def config_schema() -> list[dict[str, Any]]:
-    """配置页表单结构（附带当前值、默认值、下拉选项）。"""
+    """配置页表单结构（附带当前值、默认值、下拉选项）。
+
+    字段的 label / help 会按请求语言（Accept-Language）翻译。
+    """
     from kgrag import models as model_store
+    from kgrag.i18n import translate_field, translate_group
 
     current = public_config()
     groups = []
@@ -471,8 +475,8 @@ def config_schema() -> list[dict[str, Any]]:
             item["hot"] = f["key"] in HOT_RELOADABLE
             if f.get("type") == "model_select":
                 item["options"] = model_store.options_for(f["model_kind"])
-            fields.append(item)
-        groups.append({**g, "fields": fields})
+            fields.append(translate_field(item))
+        groups.append({**translate_group(g), "fields": fields})
     return groups
 
 

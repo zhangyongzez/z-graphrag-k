@@ -358,3 +358,26 @@ td.actions { text-align: right; white-space: nowrap; }
 .kb-weight { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; }
 .kb-weight input[type="range"] { flex: 1; accent-color: var(--accent); }
 .kb-weight .w { width: 34px; text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- 语言切换 */
+.lang-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 14px;
+}
+.lang-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: color .15s, background .15s;
+}
+.lang-btn:hover { color: var(--text); background: var(--bg-hover); }
+.lang-btn.active { color: var(--accent); font-weight: 600; }
+.lang-sep { color: var(--border); }

@@ -60,6 +60,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 语言由 Accept-Language 决定，供后端字段说明 / 错误信息使用
+@app.middleware("http")
+async def _lang_middleware(request, call_next):
+    from kgrag.i18n import set_lang
+
+    set_lang(request.headers.get("accept-language", "zh"))
+    return await call_next(request)
+
+
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(kb_router)

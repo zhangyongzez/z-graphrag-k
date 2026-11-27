@@ -104,3 +104,49 @@ def test_extract_text_ignores_thinking():
     ]
     assert _extract_text(blocks) == "回答"
     assert "推理" not in _extract_text(blocks)
+
+
+# --------------------------------------------------------------------------- #
+# 国际化
+# --------------------------------------------------------------------------- #
+def test_i18n_translate_field():
+    from kgrag.i18n import set_lang, translate_field
+
+    field = {"key": "llm_temperature", "label": "温度", "help": "中文说明"}
+
+    set_lang("zh")
+    assert translate_field(field)["label"] == "温度"
+
+    set_lang("en")
+    assert translate_field(field)["label"] == "Temperature"
+    assert "randomness" in translate_field(field)["help"]
+
+    set_lang("zh")  # 复原
+
+
+def test_i18n_unknown_field_passthrough():
+    from kgrag.i18n import set_lang, translate_field
+
+    set_lang("en")
+    field = {"key": "no_such_key", "label": "原样"}
+    assert translate_field(field)["label"] == "原样"
+    set_lang("zh")
+
+
+def test_i18n_group_translation():
+    from kgrag.i18n import set_lang, translate_group
+
+    set_lang("en")
+    g = translate_group({"key": "llm", "title": "大模型", "description": "x"})
+    assert g["title"] == "LLM"
+    set_lang("zh")
+
+
+def test_i18n_set_lang_fallback():
+    from kgrag.i18n import get_lang, set_lang
+
+    set_lang("fr")
+    assert get_lang() == "zh"  # 不支持的语言回退中文
+    set_lang("en-US")
+    assert get_lang() == "en"
+    set_lang("zh")

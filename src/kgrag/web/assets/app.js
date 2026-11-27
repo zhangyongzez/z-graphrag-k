@@ -17,13 +17,17 @@ function toast(msg, kind = "") {
 }
 
 async function api(path, opts = {}) {
+  // 带上语言，后端据此返回对应语言的字段说明与错误信息
+  const langHeader = { "Accept-Language": getLang() };
   const res = await fetch(path, {
-    headers: opts.body instanceof FormData ? {} : { "Content-Type": "application/json" },
+    headers: opts.body instanceof FormData
+      ? langHeader
+      : { "Content-Type": "application/json", ...langHeader },
     ...opts,
   });
   if (res.status === 401) {
     showLogin();
-    throw new Error("未登录");
+    throw new Error(t("login.error_empty"));
   }
   if (!res.ok) {
     let detail = res.statusText;
@@ -34,7 +38,9 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function modal({ title, body, okText = "确定", cancelText = "取消", onOk, onCancel, danger = false }) {
+function modal({ title, body, okText, cancelText, onOk, onCancel, danger = false }) {
+  okText = okText ?? t("common.ok");
+  cancelText = cancelText ?? t("common.cancel");
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
@@ -93,6 +99,8 @@ function showLogin() {
 }
 
 async function boot() {
+  applyI18n();
+  syncLangButtons();
   try {
     state.user = await api("/api/auth/me");
     enterApp();
@@ -103,7 +111,7 @@ async function boot() {
       if (m.ad_enabled) {
         const hint = $("#login-ad-hint");
         hint.style.display = "block";
-        hint.textContent = `已启用 AD 域登录（${m.ad_server}），可直接使用域账号登录`;
+        hint.textContent = t("login.ad_hint", { server: m.ad_server });
       }
     } catch { /* ignore */ }
   }
@@ -113,7 +121,7 @@ function enterApp() {
   $("#login-view").classList.add("hidden");
   $("#app-view").classList.remove("hidden");
   $("#user-name").textContent =
-    `${state.user.display_name || state.user.username}${isAdmin() ? " · 管理员" : ""}`;
+    `${state.user.display_name || state.user.username}${isAdmin() ? ` · ${t("users.role_admin")}` : ""}`;
   $$(".admin-only").forEach((el) => el.classList.toggle("hidden", !isAdmin()));
   show("dashboard");
   loadHealth();
@@ -129,35 +137,33 @@ async function maybeShowSetupGuide() {
     if (h.embedding_ready && h.llm_ready) return;
 
     const missing = [];
-    if (!h.embedding_ready) missing.push("Embedding 模型（用于文档检索）");
-    if (!h.llm_ready) missing.push("大模型（用于生成回答）");
+    if (!h.embedding_ready) missing.push(t("setup.missing_embedding"));
+    if (!h.llm_ready) missing.push(t("setup.missing_llm"));
 
     const mask = modal({
-      title: "开始使用",
+      title: t("setup.title"),
       body: `
         <div class="muted" style="margin-bottom:16px;line-height:1.8">
-          系统已就绪，但还需要配置模型才能使用完整功能。
+          ${esc(t("setup.intro"))}
         </div>
         <div class="card" style="background:var(--bg);margin-bottom:14px">
-          <div style="margin-bottom:10px"><strong>还缺少：</strong></div>
+          <div style="margin-bottom:10px"><strong>${esc(t("setup.missing"))}</strong></div>
           ${missing.map((m) => `<div style="padding:4px 0">· ${esc(m)}</div>`).join("")}
         </div>
         <div class="muted" style="font-size:13px;line-height:1.9">
-          <strong style="color:var(--text)">配置步骤</strong><br>
-          1. 进入「模型管理」，点「+ 新增模型」<br>
-          2. 选择类型和提供方，填入地址 / 密钥 / 路径<br>
-          3. 到「系统配置」下拉选中刚加的模型<br>
+          <strong style="color:var(--text)">${esc(t("setup.steps"))}</strong><br>
+          ${esc(t("setup.step1"))}<br>
+          ${esc(t("setup.step2"))}<br>
+          ${esc(t("setup.step3"))}<br>
           <br>
-          <span style="color:var(--amber)">
-            未配置大模型时，对话会降级为「纯检索模式」——直接返回匹配的原文片段。
-          </span>
+          <span style="color:var(--amber)">${esc(t("setup.note"))}</span>
         </div>
         <label class="row" style="margin-top:16px;gap:8px;cursor:pointer">
           <input type="checkbox" id="setup-skip">
-          <span class="muted" style="font-size:13px">不再提示</span>
+          <span class="muted" style="font-size:13px">${esc(t("setup.dont_show"))}</span>
         </label>`,
-      okText: "去配置",
-      cancelText: "稍后",
+      okText: t("setup.go"),
+      cancelText: t("setup.later"),
       onOk: () => {
         if ($("#setup-skip")?.checked) {
           localStorage.setItem("kgrag_setup_dismissed", "1");
@@ -180,14 +186,14 @@ async function loadHealth() {
     // 未在「模型管理」登记时明确提示，避免让人误以为已就绪
     const emb = h.embedding_ready
       ? `Embedding · ${esc(h.embedding)}`
-      : `<span style="color:var(--amber)">Embedding 未配置</span>`;
+      : `<span style="color:var(--amber)">${esc(t("nav.embedding_unconfigured"))}</span>`;
     const llm = h.llm_ready
       ? `LLM · ${esc(h.llm_model || h.llm)}`
-      : `<span style="color:var(--amber)">LLM 未配置</span>`;
+      : `<span style="color:var(--amber)">${esc(t("nav.llm_unconfigured"))}</span>`;
     $("#sys-status").innerHTML =
       `${esc(h.vectorstore)}<br>${emb}<br>${llm}`;
   } catch {
-    $("#sys-status").textContent = "服务不可用";
+    $("#sys-status").textContent = t("nav.service_down");
   }
 }
 
@@ -197,7 +203,7 @@ $("#login-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") doL
 async function doLogin() {
   const username = $("#login-user").value.trim();
   const password = $("#login-pass").value;
-  if (!username || !password) return toast("请输入用户名和密码", "err");
+  if (!username || !password) return toast(t("login.error_empty"), "err");
   try {
     const r = await api("/api/auth/login", {
       method: "POST",
@@ -247,12 +253,12 @@ async function loadDashboard() {
   try {
     const s = await api("/api/kb/stats/dashboard");
     $("#stats").innerHTML = [
-      ["知识库", s.kb_count],
-      ["文档", s.total_documents],
-      ["向量块", s.total_chunks],
-      ["Embedding", `${s.embedding_provider} · ${s.embedding_dim}维`],
-      ["向量库", s.vectorstore_provider],
-      ["LLM", `${s.llm_provider} · ${s.llm_model || "-"}`],
+      [t("dash.kb_count"), s.kb_count],
+      [t("dash.docs"), s.total_documents],
+      [t("dash.chunks"), s.total_chunks],
+      [t("dash.embedding"), `${s.embedding_provider} · ${s.embedding_dim}`],
+      [t("dash.vectorstore"), s.vectorstore_provider],
+      [t("dash.llm"), `${s.llm_provider} · ${s.llm_model || "-"}`],
     ].map(([label, value], i) => `
       <div class="stat">
         <div class="label">${label}</div>
@@ -265,16 +271,16 @@ async function loadDashboard() {
       ? kbs.map((kb) => `
         <div class="row" style="padding:10px 0;border-bottom:1px solid var(--border)">
           <div class="grow">
-            <div>${esc(kb.name)} ${kb.is_public ? '<span class="badge">公共</span>' : ""}
-              ${kb.is_owner ? '<span class="badge ok">我的</span>' : ""}</div>
-            <div class="muted">${esc(kb.description || "无描述")}</div>
+            <div>${esc(kb.name)} ${kb.is_public ? `<span class="badge">${esc(t("dash.public"))}</span>` : ""}
+              ${kb.is_owner ? `<span class="badge ok">${esc(t("dash.mine"))}</span>` : ""}</div>
+            <div class="muted">${esc(kb.description || t("dash.no_desc"))}</div>
           </div>
-          <span class="badge">${kb.document_count} 文档</span>
-          <span class="badge">${kb.chunk_count} 块</span>
+          <span class="badge">${kb.document_count} ${esc(t("dash.docs"))}</span>
+          <span class="badge">${kb.chunk_count} ${esc(t("dash.chunks"))}</span>
         </div>`).join("")
-      : `<div class="empty">还没有知识库，去「知识库」页创建一个</div>`;
+      : `<div class="empty">${esc(t("dash.no_kb"))}</div>`;
   } catch (e) {
-    toast(`加载失败：${e.message}`, "err");
+    toast(t("kb.load_failed", { msg: e.message }), "err");
   }
 }
 
@@ -286,24 +292,26 @@ async function loadKbList() {
     state.kbs = await api("/api/kb");
     const el = $("#kb-list");
     if (!state.kbs.length) {
-      el.innerHTML = `<div class="empty"><div class="big">▤</div>还没有知识库</div>`;
+      el.innerHTML = `<div class="empty"><div class="big">▤</div>${esc(t("kb.empty"))}</div>`;
       return;
     }
     el.innerHTML = `<div class="card"><table>
       <thead><tr>
-        <th>名称</th><th>描述</th><th>归属</th><th>文档</th><th>向量块</th><th>创建时间</th><th></th>
+        <th>${esc(t("kb.name"))}</th><th>${esc(t("kb.description"))}</th>
+        <th>${esc(t("kb.owner"))}</th><th>${esc(t("kb.docs"))}</th>
+        <th>${esc(t("kb.chunks"))}</th><th>${esc(t("kb.created_at"))}</th><th></th>
       </tr></thead>
       <tbody>${state.kbs.map((kb) => `
         <tr>
           <td><strong>${esc(kb.name)}</strong>
-            ${kb.is_public ? '<span class="badge">公共</span>' : ""}</td>
+            ${kb.is_public ? `<span class="badge">${esc(t("dash.public"))}</span>` : ""}</td>
           <td class="muted">${esc(kb.description || "-")}</td>
           <td class="muted">${esc(kb.owner_name || "—")}</td>
           <td>${kb.document_count}</td>
           <td>${kb.chunk_count}</td>
           <td class="muted mono">${esc(kb.created_at.slice(0, 10))}</td>
           <td class="actions">
-            <button class="btn btn-sm" data-open="${kb.id}">管理</button>
+            <button class="btn btn-sm" data-open="${kb.id}">${esc(t("kb.manage"))}</button>
           </td>
         </tr>`).join("")}
       </tbody></table></div>`;
@@ -311,28 +319,28 @@ async function loadKbList() {
       b.addEventListener("click", () => openKb(b.dataset.open));
     });
   } catch (e) {
-    toast(`加载失败：${e.message}`, "err");
+    toast(t("kb.load_failed", { msg: e.message }), "err");
   }
 }
 
 /* ------------------------------------------------------------------ 新建知识库 */
 $("#btn-create-kb").addEventListener("click", () => {
   modal({
-    title: "新建知识库",
+    title: t("kb.create"),
     body: `
-      <label class="field"><span>名称</span>
-        <input class="input" id="m-name" placeholder="例如：产品手册"></label>
-      <label class="field"><span>描述</span>
-        <textarea class="textarea" id="m-desc" placeholder="可选"></textarea></label>`,
-    okText: "创建",
+      <label class="field"><span>${esc(t("kb.name"))}</span>
+        <input class="input" id="m-name" placeholder="${esc(t("kb.name_placeholder"))}"></label>
+      <label class="field"><span>${esc(t("kb.description"))}</span>
+        <textarea class="textarea" id="m-desc" placeholder="${esc(t("kb.desc_placeholder"))}"></textarea></label>`,
+    okText: t("common.create"),
     onOk: async () => {
       const name = $("#m-name").value.trim();
-      if (!name) throw new Error("名称不能为空");
+      if (!name) throw new Error(t("kb.name_required"));
       await api("/api/kb", {
         method: "POST",
         body: JSON.stringify({ name, description: $("#m-desc").value.trim() }),
       });
-      toast("创建成功", "ok");
+      toast(t("kb.create_success"), "ok");
       loadKbList();
     },
   });
@@ -345,7 +353,7 @@ async function openKb(id) {
     const kb = await api(`/api/kb/${id}`);
     state.currentKb = kb;
     $("#kb-detail-name").textContent = kb.name;
-    $("#kb-detail-desc").textContent = kb.description || "无描述";
+    $("#kb-detail-desc").textContent = kb.description || t("dash.no_desc");
     $("#btn-delete-kb").style.display = (kb.is_owner || isAdmin()) ? "" : "none";
     $("#dropzone").style.display = kb.can_write || isAdmin() ? "" : "none";
     show("kb-detail");
@@ -362,28 +370,29 @@ async function loadKbDocs() {
     const data = await api(`/api/kb/${kb.id}/documents`);
     const el = $("#kb-docs");
     if (!data.documents.length) {
-      el.innerHTML = `<div class="empty">还没有文档，上传一些吧</div>`;
+      el.innerHTML = `<div class="empty">${esc(t("kb.detail.no_docs"))}</div>`;
       return;
     }
     el.innerHTML = `<table>
-      <thead><tr><th>文件名</th><th>向量块</th><th></th></tr></thead>
+      <thead><tr><th>${esc(t("kb.detail.filename"))}</th>
+        <th>${esc(t("kb.detail.chunks"))}</th><th></th></tr></thead>
       <tbody>${data.documents.map((d) => `
         <tr>
           <td>${esc(d.filename)}</td>
           <td>${d.chunks}</td>
           <td class="actions">
-            <button class="btn btn-sm btn-danger" data-del="${esc(d.filename)}">删除</button>
+            <button class="btn btn-sm btn-danger" data-del="${esc(d.filename)}">${esc(t("common.delete"))}</button>
           </td>
         </tr>`).join("")}
       </tbody></table>
-      <div class="muted" style="margin-top:12px">共 ${data.row_count} 个向量块</div>`;
+      <div class="muted" style="margin-top:12px">${esc(t("kb.detail.total_chunks", { n: data.row_count }))}</div>`;
     $$("[data-del]").forEach((b) => {
       b.addEventListener("click", async () => {
-        if (!confirm(`确定删除「${b.dataset.del}」？`)) return;
+        if (!confirm(t("kb.detail.delete_doc_confirm", { name: b.dataset.del }))) return;
         try {
           await api(`/api/kb/${kb.id}/documents/${encodeURIComponent(b.dataset.del)}`,
             { method: "DELETE" });
-          toast("已删除", "ok");
+          toast(t("kb.deleted"), "ok");
           loadKbDocs();
         } catch (e) { toast(e.message, "err"); }
       });
@@ -400,35 +409,32 @@ $("#btn-ingest-local").addEventListener("click", () => {
   const kb = state.currentKb;
   if (!kb) return;
   modal({
-    title: "从服务器路径导入",
+    title: t("kb.detail.ingest_title"),
     body: `
-      <label class="field"><span>文件或目录路径</span>
+      <label class="field"><span>${esc(t("kb.detail.ingest_path"))}</span>
         <input class="input" id="ing-path"
-          placeholder="D:\\文档\\产品手册  或  /data/docs">
-        <div class="field-hint">
-          填写<b>服务器上</b>的绝对路径。填目录会递归导入其中所有受支持的文件。<br>
-          该路径必须与当前服务运行在同一台机器上。
-        </div>
+          placeholder="D:/docs  or  /data/docs">
+        <div class="field-hint">${esc(t("kb.detail.ingest_hint"))}</div>
       </label>
       <div id="ing-result" class="field-hint"></div>`,
-    okText: "开始导入",
+    okText: t("kb.detail.ingest_start"),
     onOk: async () => {
       const path = $("#ing-path").value.trim();
-      if (!path) throw new Error("路径不能为空");
+      if (!path) throw new Error(t("kb.detail.path_required"));
 
       const btn = document.querySelector("#modal-ok");
-      if (btn) { btn.disabled = true; btn.textContent = "导入中…"; }
+      if (btn) { btn.disabled = true; btn.textContent = t("common.loading"); }
       const res = $("#ing-result");
-      if (res) res.textContent = "正在解析并写入向量库，大目录可能需要几分钟…";
+      if (res) res.textContent = t("kb.detail.ingest_progress");
 
       try {
         const r = await api(`/api/kb/${kb.id}/ingest?path=${encodeURIComponent(path)}`, {
           method: "POST",
         });
-        toast(`导入完成：${r.files} 个文件，${r.chunks} 个切块`, "ok");
+        toast(t("kb.detail.ingest_done", { files: r.files, chunks: r.chunks }), "ok");
         loadKbDocs();
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = "开始导入"; }
+        if (btn) { btn.disabled = false; btn.textContent = t("kb.detail.ingest_start"); }
       }
     },
   });
@@ -438,10 +444,10 @@ $("#btn-ingest-local").addEventListener("click", () => {
 $("#btn-delete-kb").addEventListener("click", async () => {
   const kb = state.currentKb;
   if (!kb) return;
-  if (!confirm(`删除知识库「${kb.name}」及其所有数据？此操作不可恢复。`)) return;
+  if (!confirm(t("kb.delete_confirm", { name: kb.name }))) return;
   try {
     await api(`/api/kb/${kb.id}`, { method: "DELETE" });
-    toast("已删除", "ok");
+    toast(t("kb.deleted"), "ok");
     show("kb");
   } catch (e) { toast(e.message, "err"); }
 });
@@ -471,7 +477,7 @@ async function uploadFiles(files) {
   const prog = $("#upload-progress");
   prog.innerHTML = files.map((f) =>
     `<div class="row" style="padding:6px 0"><span class="grow">${esc(f.name)}</span>
-     <span class="muted" data-s="${esc(f.name)}">上传中…</span></div>`).join("");
+     <span class="muted" data-s="${esc(f.name)}">${esc(t("kb.detail.uploading"))}</span></div>`).join("");
 
   const fd = new FormData();
   files.forEach((f) => fd.append("files", f));
@@ -484,16 +490,16 @@ async function uploadFiles(files) {
     res.results.forEach((r) => {
       const el = prog.querySelector(`[data-s="${CSS.escape(r.file)}"]`);
       if (el) {
-        el.textContent = r.ok ? `✓ ${r.chunks} 块` : `✗ ${r.error}`;
+        el.textContent = r.ok ? `✓ ${r.chunks} ${t("kb.detail.chunks")}` : `✗ ${r.error}`;
         el.className = r.ok ? "badge ok" : "badge err";
       }
     });
-    toast(`完成：成功 ${res.uploaded}，失败 ${res.failed}`,
+    toast(t("kb.detail.upload_done", { ok: res.uploaded, fail: res.failed }),
       res.failed ? "err" : "ok");
     setTimeout(() => { prog.innerHTML = ""; }, 3000);
     loadKbDocs();
   } catch (e) {
-    toast(`上传失败：${e.message}`, "err");
+    toast(t("kb.detail.upload_failed", { msg: e.message }), "err");
     prog.innerHTML = "";
   }
 }
@@ -531,7 +537,7 @@ async function loadModelOptions() {
     const sel = $("#chat-model");
     if (!sel) return;
     if (!models.length) {
-      sel.innerHTML = `<option value="">（未登记模型，请到「模型管理」新增）</option>`;
+      sel.innerHTML = `<option value="">${esc(t("chat.no_model_registered"))}</option>`;
       return;
     }
     // 只列真实模型；默认选中「系统配置」里指定的那个，避免出现两个指向同一模型的选项
@@ -557,14 +563,14 @@ async function loadConversations() {
 function renderConvList() {
   const el = $("#conv-list");
   if (!state.conversations.length) {
-    el.innerHTML = `<div class="muted" style="padding:12px;text-align:center">暂无对话</div>`;
+    el.innerHTML = `<div class="muted" style="padding:12px;text-align:center">${esc(t("chat.no_conv"))}</div>`;
     return;
   }
   el.innerHTML = state.conversations.map((c) => `
     <div class="list-item ${state.currentConv?.id === c.id ? "active" : ""}" data-conv="${c.id}">
       <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
         ${esc(c.title)}</span>
-      <button class="btn btn-sm" data-del-conv="${c.id}" title="删除">×</button>
+      <button class="btn btn-sm" data-del-conv="${c.id}" title="${esc(t("common.delete"))}">×</button>
     </div>`).join("");
   $$("[data-conv]").forEach((el) => {
     el.addEventListener("click", (e) => {
@@ -575,7 +581,7 @@ function renderConvList() {
   $$("[data-del-conv]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm("删除这个对话？")) return;
+      if (!confirm(t("chat.delete_confirm"))) return;
       await api(`/api/chat/conversations/${btn.dataset.delConv}`, { method: "DELETE" });
       if (state.currentConv?.id === btn.dataset.delConv) state.currentConv = null;
       loadConversations();
@@ -585,7 +591,7 @@ function renderConvList() {
 }
 
 function emptyChat() {
-  return `<div class="empty"><div class="big">◐</div>开始新的对话</div>`;
+  return `<div class="empty"><div class="big">◐</div>${esc(t("chat.empty"))}</div>`;
 }
 
 async function openConversation(id) {
@@ -595,9 +601,11 @@ async function openConversation(id) {
     state.chatHistory = c.messages
       .filter((m) => m.role !== "system")
       .map((m) => [m.role === "user" ? "human" : "ai", m.content]);
-    $("#chat-title").textContent = c.title || "对话";
+    $("#chat-title").textContent = c.title || t("chat.title");
     $("#chat-sub").textContent =
-      c.kb_weights.length ? `关联 ${c.kb_weights.length} 个知识库` : "未选择知识库";
+      c.kb_weights.length
+        ? t("chat.kb_linked", { n: c.kb_weights.length })
+        : t("chat.no_kb_selected");
     // 会话没存模型时，回退到「系统配置」里选中的那个，避免下拉框空白
     $("#chat-model").value = c.llm_model || state.defaultLlmId;
     renderConvList();
@@ -622,7 +630,7 @@ function renderMessages(messages) {
 function renderKbWeights(weights) {
   const el = $("#chat-kb-weights");
   if (!state.kbs.length) {
-    el.innerHTML = `<div class="muted" style="font-size:12px;padding:6px 0">暂无知识库</div>`;
+    el.innerHTML = `<div class="muted" style="font-size:12px;padding:6px 0">${esc(t("chat.no_kb"))}</div>`;
     return;
   }
   const map = new Map(weights.map((w) => [w.kb_id, w.weight]));
@@ -663,14 +671,16 @@ async function saveWeights() {
     body: JSON.stringify({ kb_weights: weights }),
   }).catch(() => {});
   state.currentConv.kb_weights = weights;
-  $("#chat-sub").textContent = weights.length ? `关联 ${weights.length} 个知识库` : "未选择知识库";
+  $("#chat-sub").textContent = weights.length
+    ? t("chat.kb_linked", { n: weights.length })
+    : t("chat.no_kb_selected");
 }
 
 $("#btn-new-conv").addEventListener("click", async () => {
   try {
     const c = await api("/api/chat/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "新对话", llm_model: state.defaultLlmId }),
+      body: JSON.stringify({ title: t("chat.new"), llm_model: state.defaultLlmId }),
     });
     state.conversations.unshift(c);
     await openConversation(c.id);
@@ -716,7 +726,7 @@ function appendMsg(role, text, sources, reasoning) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   div.innerHTML = `
-    <div class="avatar">${role === "user" ? "我" : "AI"}</div>
+    <div class="avatar">${role === "user" ? t("chat.me") : "AI"}</div>
     <div class="bubble"></div>`;
   const bubble = div.querySelector(".bubble");
 
@@ -736,7 +746,7 @@ function appendMsg(role, text, sources, reasoning) {
   if (sources && sources.length) {
     const det = document.createElement("details");
     det.className = "sources";
-    det.innerHTML = `<summary>引用 ${sources.length} 条资料</summary><ul>${
+    det.innerHTML = `<summary>${esc(t("chat.sources", { n: sources.length }))}</summary><ul>${
       sources.map((s) => `<li>${esc(s.filename || "?")} — ${esc((s.preview || "").slice(0, 70))}</li>`).join("")
     }</ul>`;
     bubble.appendChild(det);
@@ -748,7 +758,7 @@ function appendMsg(role, text, sources, reasoning) {
 function buildReasoning(text) {
   const det = document.createElement("details");
   det.className = "reasoning";
-  det.innerHTML = `<summary>💭 推理过程</summary><div class="reasoning-body"></div>`;
+  det.innerHTML = `<summary>💭 ${esc(t("chat.reasoning"))}</summary><div class="reasoning-body"></div>`;
   det.querySelector(".reasoning-body").textContent = text;
   return det;
 }
@@ -817,7 +827,7 @@ async function sendChat() {
         } else if (ev === "retrieval_only") {
           // 未配置大模型，回答来自原文片段
           bubble.dataset.retrievalOnly = "1";
-          bubble.querySelector(".avatar").textContent = "检";
+          bubble.querySelector(".avatar").textContent = t("chat.retrieval_only");
         } else if (ev === "reasoning") {
           reasoning += data.text;
           let det = bubble.querySelector(".reasoning");
@@ -844,11 +854,11 @@ async function sendChat() {
     }
 
     bubble.querySelector(".avatar").textContent =
-      bubble.dataset.retrievalOnly ? "检" : "AI";
+      bubble.dataset.retrievalOnly ? t("chat.retrieval_only") : "AI";
     if (sources.length) {
       const det = document.createElement("details");
       det.className = "sources";
-      det.innerHTML = `<summary>引用 ${sources.length} 条资料</summary><ul>${
+      det.innerHTML = `<summary>${esc(t("chat.sources", { n: sources.length }))}</summary><ul>${
         sources.map((s) => `<li>${esc(s.filename || "?")} — ${esc((s.preview || "").slice(0, 70))}</li>`).join("")
       }</ul>`;
       bubble.querySelector(".bubble").appendChild(det);
@@ -857,7 +867,7 @@ async function sendChat() {
     loadConversations();
   } catch (e) {
     bubble.querySelector(".avatar").textContent = "!";
-    bubble.querySelector(".bubble").textContent = `出错了：${e.message}`;
+    bubble.querySelector(".bubble").textContent = t("chat.error", { msg: e.message });
     toast(e.message, "err");
   }
 }
@@ -893,13 +903,14 @@ function fieldInput(f) {
   if (f.type === "model_select") {
     const opts = f.options || [];
     if (!opts.length) {
-      const what = f.model_kind === "llm" ? "大" : "Embedding";
+      const what = f.model_kind === "llm"
+      ? t("config.model_kind_llm")
+      : t("config.model_kind_embedding");
       return `<div class="muted" style="padding:8px 0;font-size:13px">
-        还没有可选的${what}模型，请先到「
-        <a href="#" data-goto-models style="color:var(--accent)">模型管理</a>」新增</div>`;
+        ${esc(t("config.no_model", { kind: what }))}</div>`;
     }
     return `<select class="select" id="cfg-${f.key}">
-      <option value="">（未选择，使用 .env 默认）</option>
+      <option value="">${esc(t("config.not_selected"))}</option>
       ${opts.map((o) => `<option value="${esc(o.id)}" ${o.id === val ? "selected" : ""}>
         ${esc(o.name)}${o.model ? ` · ${esc(o.model)}` : ""}（${esc(o.provider)}）</option>`).join("")}
     </select>`;
@@ -907,7 +918,7 @@ function fieldInput(f) {
   if (f.type === "bool") {
     return `<div class="switch">
       <input type="checkbox" id="cfg-${f.key}" ${val ? "checked" : ""}>
-      <span class="muted">${val ? "已启用" : "已停用"}</span></div>`;
+      <span class="muted">${val ? esc(t("common.enabled")) : esc(t("common.disabled"))}</span></div>`;
   }
   if (f.type === "select") {
     return `<select class="select" id="cfg-${f.key}">${
@@ -917,7 +928,7 @@ function fieldInput(f) {
   if (f.type === "password") {
     const isSet = val && val.is_set;
     return `<input class="input" type="password" id="cfg-${f.key}"
-      placeholder="${isSet ? "已设置（留空不修改）" : "未设置"}"
+      placeholder="${isSet ? esc(t("config.set_secret")) : esc(t("config.not_set"))}"
       value="${isSet ? "" : esc(val?.value ?? "")}">`;
   }
   if (f.type === "number") {
@@ -936,15 +947,15 @@ function renderConfigTab() {
   $("#config-body").innerHTML = `
     <div class="row" style="margin-bottom:14px;gap:10px;flex-wrap:wrap">
       ${g.restart
-        ? '<span class="badge err">修改后需重启服务</span>'
-        : '<span class="badge ok">修改后即时生效</span>'}
+        ? `<span class="badge err">${esc(t("config.need_restart"))}</span>`
+        : `<span class="badge ok">${esc(t("config.hot_reload"))}</span>`}
       ${g.description ? `<span class="muted">${esc(g.description)}</span>` : ""}
     </div>
     <div class="form-grid">
       ${g.fields.map((f) => `
         <label class="field" ${f.type === "model_select" ? 'style="grid-column:1/-1"' : ""}>
           <span>${esc(f.label)}
-            ${!isDefault(f) ? '<span class="badge" style="margin-left:6px">已修改</span>' : ""}
+            ${!isDefault(f) ? `<span class="badge" style="margin-left:6px">${esc(t("config.modified"))}</span>` : ""}
           </span>
           ${fieldInput(f)}
           ${f.help ? `<div class="field-hint">${esc(f.help)}</div>` : ""}
@@ -974,8 +985,10 @@ $("#btn-save-config").addEventListener("click", async () => {
       body: JSON.stringify({ values }),
     });
     toast(r.changed.length
-      ? `已保存 ${r.changed.length} 项${r.restart_required ? "，需重启服务生效" : ""}`
-      : "没有变化", r.restart_required ? "err" : "ok");
+      ? (r.restart_required
+        ? t("config.saved_restart", { n: r.changed.length })
+        : t("config.saved", { n: r.changed.length }))
+      : t("config.no_change"), r.restart_required ? "err" : "ok");
     loadConfig();
   } catch (e) {
     toast(e.message, "err");
@@ -983,10 +996,10 @@ $("#btn-save-config").addEventListener("click", async () => {
 });
 
 $("#btn-reset-config").addEventListener("click", async () => {
-  if (!confirm("恢复所有配置为默认值？当前自定义的配置会被清除。")) return;
+  if (!confirm(t("config.reset_confirm"))) return;
   try {
     await api("/api/admin/config/reset", { method: "POST" });
-    toast("已恢复默认配置", "ok");
+    toast(t("config.reset_done"), "ok");
     loadConfig();
   } catch (e) {
     toast(e.message, "err");
@@ -994,16 +1007,23 @@ $("#btn-reset-config").addEventListener("click", async () => {
 });
 
 /* ------------------------------------------------------------------ 模型管理 */
-const PROVIDER_LABELS = {
-  anthropic: "Anthropic（Claude）",
-  openai: "OpenAI 兼容（含 DeepSeek / vLLM / 网关）",
-  ollama: "Ollama 本地服务",
-  local: "本地目录（sentence-transformers）",
-  hash: "哈希占位（仅测试）",
-  mock: "Mock（仅测试）",
-};
+/* 提供方显示名。用函数而非常量，保证切换语言后取到新值 */
+function providerLabel(key) {
+  const map = {
+    anthropic: "Anthropic (Claude)",
+    openai: t("models.provider_openai"),
+    ollama: "Ollama",
+    local: t("models.provider_local"),
+    hash: t("models.provider_hash"),
+    mock: "Mock",
+  };
+  return map[key] || key;
+}
 
-const KIND_LABELS = { llm: "大模型", embedding: "Embedding" };
+const KIND_LABELS = {
+  llm: t("models.tab_llm"),
+  embedding: "Embedding",
+};
 
 async function loadModels() {
   try {
@@ -1012,13 +1032,15 @@ async function loadModels() {
     const el = $("#model-list");
     if (!state.models.length) {
       el.innerHTML = `<div class="empty">
-        <div class="big">◈</div>还没有模型，点击右上角「+ 新增模型」添加</div>`;
+        <div class="big">◈</div>${esc(t("models.empty"))}</div>`;
       return;
     }
     el.innerHTML = `<table>
       <thead><tr>
-        <th>名称</th><th>类型</th><th>提供方</th><th>模型 / 路径</th>
-        <th>地址</th><th>密钥</th><th>维度</th><th></th>
+        <th>${esc(t("models.name"))}</th><th>${esc(t("models.kind"))}</th>
+        <th>${esc(t("models.provider"))}</th><th>${esc(t("models.model_path"))}</th>
+        <th>${esc(t("models.address"))}</th><th>${esc(t("models.key"))}</th>
+        <th>${esc(t("models.dim"))}</th><th></th>
       </tr></thead>
       <tbody>${state.models.map((m) => `
         <tr>
@@ -1030,11 +1052,11 @@ async function loadModels() {
             ${esc(m.model || m.path || "-")}</td>
           <td class="mono muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">
             ${esc(m.base_url || "-")}</td>
-          <td>${m.has_api_key ? '<span class="badge ok">已配置</span>' : '<span class="muted">-</span>'}</td>
+          <td>${m.has_api_key ? `<span class="badge ok">${esc(t("common.configured"))}</span>` : '<span class="muted">-</span>'}</td>
           <td>${m.dim ?? "-"}</td>
           <td class="actions">
-            <button class="btn btn-sm" data-edit-model="${m.id}">编辑</button>
-            <button class="btn btn-sm btn-danger" data-del-model="${m.id}">删除</button>
+            <button class="btn btn-sm" data-edit-model="${m.id}">${esc(t("common.edit"))}</button>
+            <button class="btn btn-sm btn-danger" data-del-model="${m.id}">${esc(t("common.delete"))}</button>
           </td>
         </tr>`).join("")}
       </tbody></table>`;
@@ -1048,10 +1070,10 @@ async function loadModels() {
     $$("[data-del-model]").forEach((b) => {
       b.addEventListener("click", async () => {
         const m = state.models.find((x) => x.id === b.dataset.delModel);
-        if (!confirm(`删除模型「${m?.name || ""}」？`)) return;
+        if (!confirm(t("models.delete_confirm", { name: m?.name || "" }))) return;
         try {
           await api(`/api/admin/models/${b.dataset.delModel}`, { method: "DELETE" });
-          toast("已删除", "ok");
+          toast(t("kb.deleted"), "ok");
           loadModels();
         } catch (e) { toast(e.message, "err"); }
       });
@@ -1070,36 +1092,36 @@ function openModelModal(model, defaults) {
   const isEdit = !!model?.id;
   const m = model || { kind: "llm", provider: "openai", ...defaults };
   modal({
-    title: isEdit ? "编辑模型" : "新增模型",
+    title: isEdit ? t("models.edit_title") : t("models.create_title"),
     body: `
       <div class="row" style="gap:12px;margin-bottom:4px">
-        <label class="field grow" style="margin-bottom:0"><span>类型 *</span>
+        <label class="field grow" style="margin-bottom:0"><span>${esc(t("models.kind"))} *</span>
           <select class="select" id="mm-kind" ${isEdit ? "disabled" : ""}>
-            <option value="llm" ${m.kind === "llm" ? "selected" : ""}>大模型（LLM）</option>
-            <option value="embedding" ${m.kind === "embedding" ? "selected" : ""}>Embedding（向量化）</option>
+            <option value="llm" ${m.kind === "llm" ? "selected" : ""}>${esc(t("models.kind_llm"))}</option>
+            <option value="embedding" ${m.kind === "embedding" ? "selected" : ""}>${esc(t("models.kind_embedding"))}</option>
           </select>
           <div class="field-hint" id="mm-kind-hint"></div></label>
       </div>
 
-      <label class="field"><span>名称 *</span>
+      <label class="field"><span>${esc(t("models.name"))} *</span>
         <input class="input" id="mm-name" value="${esc(m.name || "")}"
-          placeholder="如 deepseek-chat、bge-m3"></label>
+          placeholder="${esc(t("models.placeholder_name"))}"></label>
 
-      <label class="field"><span>提供方 *</span>
+      <label class="field"><span>${esc(t("models.provider"))} *</span>
         <select class="select" id="mm-provider"></select>
         <div class="field-hint" id="mm-provider-hint"></div></label>
 
       <div id="mm-conn"></div>
 
-      <label class="field"><span>备注</span>
+      <label class="field"><span>${esc(t("models.note"))}</span>
         <input class="input" id="mm-note" value="${esc(m.note || "")}"></label>
       <div id="mm-check" class="field-hint"></div>`,
-    okText: isEdit ? "保存" : "新增",
+    okText: isEdit ? t("common.save") : t("common.add"),
     onOk: async () => {
       const kind = $("#mm-kind").value;
       const provider = $("#mm-provider").value;
       const name = $("#mm-name").value.trim();
-      if (!name) throw new Error("名称不能为空");
+      if (!name) throw new Error(t("models.name_required"));
 
       const payload = {
         name,
@@ -1118,7 +1140,7 @@ function openModelModal(model, defaults) {
         await api(`/api/admin/models/${model.id}`, {
           method: "PATCH", body: JSON.stringify(payload),
         });
-        toast("已保存", "ok");
+        toast(t("models.saved"), "ok");
       } else {
         const created = await api("/api/admin/models", {
           method: "POST", body: JSON.stringify(payload),
@@ -1126,7 +1148,7 @@ function openModelModal(model, defaults) {
         if (created?.warning) {
           toast(created.warning, "err");
         } else {
-          toast("已新增，可在「系统配置」中选择", "ok");
+          toast(t("models.created"), "ok");
         }
       }
       loadModels();
@@ -1144,28 +1166,28 @@ function openModelModal(model, defaults) {
     const isMock = provider === "mock" || provider === "hash";
     $("#mm-conn").innerHTML = `
       ${!isLocal && !isMock ? `
-        <label class="field"><span>API 地址</span>
+        <label class="field"><span>${esc(t("models.api_base"))}</span>
           <input class="input" id="mm-base" value="${esc(m.base_url || "")}"
-            placeholder="${provider === "ollama" ? "http://localhost:11434" : "https://api.example.com/v1"}">
-          <div class="field-hint">OpenAI 兼容端点需带 /v1 后缀；Ollama 填服务根地址。</div></label>
-        <label class="field"><span>API Key / Token</span>
+            placeholder="${provider === "ollama" ? "http://localhost:11434" : esc(t("models.placeholder_base"))}">
+          <div class="field-hint">${esc(t("models.hint_api_base"))}</div></label>
+        <label class="field"><span>${esc(t("models.api_key"))}</span>
           <input class="input" type="password" id="mm-key"
-            placeholder="${isEdit && m.has_api_key ? "已设置（留空不修改）" : "sk-..."}">
-          <div class="field-hint">密钥保存在模型记录中，不会返回给前端。</div></label>` : ""}
+            placeholder="${isEdit && m.has_api_key ? esc(t("config.set_secret")) : "sk-..."}">
+          <div class="field-hint">${esc(t("models.hint_api_key"))}</div></label>` : ""}
       ${isLocal ? `
-        <label class="field"><span>模型目录 *</span>
+        <label class="field"><span>${esc(t("models.local_path"))} *</span>
           <input class="input" id="mm-path" value="${esc(m.path || "")}"
-            placeholder="D:/models/bge-m3 或 ./models/bge-m3">
-          <div class="field-hint">需包含 config.json 与权重文件（model.safetensors / pytorch_model.bin）。</div></label>` : ""}
+            placeholder="${esc(t("models.placeholder_path"))}">
+          <div class="field-hint">${esc(t("models.hint_local_path"))}</div></label>` : ""}
       <div class="row" style="gap:12px">
-        <label class="field grow"><span>模型标识</span>
+        <label class="field grow"><span>${esc(t("models.model_id"))}</span>
           <input class="input" id="mm-model" value="${esc(m.model || "")}"
-            placeholder="${isLocal ? "可留空" : "如 gpt-4o、deepseek-chat"}">
-          <div class="field-hint">调用 API 时使用的模型名。</div></label>
-        <label class="field" style="width:120px"><span>维度</span>
+            placeholder="${isLocal ? "" : esc(t("models.placeholder_model"))}">
+          <div class="field-hint">${esc(t("models.hint_model_id"))}</div></label>
+        <label class="field" style="width:120px"><span>${esc(t("models.dim"))}</span>
           <input class="input" type="number" id="mm-dim" value="${m.dim ?? ""}"
-            placeholder="${isLocal ? "自动" : "如 1024"}">
-          <div class="field-hint">Embedding 用。</div></label>
+            placeholder="${isLocal ? esc(t("models.auto")) : esc(t("models.placeholder_dim"))}">
+          <div class="field-hint">${esc(t("models.hint_dim"))}</div></label>
       </div>`;
     // 本地模型路径失焦时自动探测
     if (isLocal && $("#mm-path")) {
@@ -1179,7 +1201,7 @@ function openModelModal(model, defaults) {
           const chk = $("#mm-check");
           if (!chk) return;
           chk.textContent = info.ok
-            ? `✓ ${info.message}${info.dim ? `，维度 ${info.dim}` : ""}`
+            ? `✓ ${info.message}${info.dim ? ` (${t("models.dim")} ${info.dim})` : ""}`
             : `✗ ${info.message}`;
           chk.style.color = info.ok ? "var(--green)" : "var(--red)";
           if (info.ok && info.dim && !$("#mm-dim").value) $("#mm-dim").value = info.dim;
@@ -1189,16 +1211,16 @@ function openModelModal(model, defaults) {
   };
 
   const KIND_HINTS = {
-    llm: "大模型负责「生成回答」。不配置时对话会降级为纯检索模式。",
-    embedding: "Embedding 负责「检索」。本地模型需选择本地目录，是使用知识库的必需项。",
+    llm: t("models.hint_kind_llm"),
+    embedding: t("models.hint_kind_embedding"),
   };
   const PROVIDER_HINTS = {
-    anthropic: "Claude 官方接口，需 API Key。",
-    openai: "OpenAI 及所有兼容接口（DeepSeek / 通义 / 智谱 / vLLM / 公司网关）。",
-    ollama: "连接本机或远程的 Ollama 服务。",
-    local: "从服务器本地目录加载模型，离线可用，需包含 config.json 与权重文件。",
-    hash: "哈希占位，向量无语义，仅用于跑通链路。",
-    mock: "返回固定文本，不调用真实模型，仅用于测试。",
+    anthropic: t("models.hint_anthropic"),
+    openai: t("models.hint_openai"),
+    ollama: t("models.hint_ollama"),
+    local: t("models.hint_local"),
+    hash: t("models.hint_hash"),
+    mock: t("models.hint_mock"),
   };
 
   const fillProviders = () => {
@@ -1207,7 +1229,7 @@ function openModelModal(model, defaults) {
       ? ["anthropic", "openai", "ollama", "mock"]
       : ["local", "openai", "ollama", "hash"];
     provSel.innerHTML = providers.map((p) =>
-      `<option value="${p}" ${p === m.provider ? "selected" : ""}>${PROVIDER_LABELS[p] || p}</option>`
+      `<option value="${p}" ${p === m.provider ? "selected" : ""}>${providerLabel(p)}</option>`
     ).join("");
     if (!providers.includes(m.provider)) provSel.value = providers[0];
     $("#mm-kind-hint").textContent = KIND_HINTS[kind] || "";
@@ -1251,8 +1273,10 @@ async function loadAdminDash() {
 
 function renderAdminDash(d) {
     const FIELD_LABELS = {
-      selected: "当前选中", provider: "提供方", model: "模型", device: "设备",
-      dim: "维度", address: "地址", uri: "地址", collection: "集合",
+      selected: t("admin_dash.selected"), provider: t("admin_dash.provider"),
+      model: t("admin_dash.model"), device: t("admin_dash.device"),
+      dim: t("admin_dash.dim"), address: t("admin_dash.address"),
+      uri: t("admin_dash.uri"), collection: t("admin_dash.collection"),
     };
     const modelCard = (title, m) => `
       <div class="card">
@@ -1267,13 +1291,13 @@ function renderAdminDash(d) {
 
     $("#admin-dash-body").innerHTML = `
       <div class="stats" style="margin-bottom:20px">
-        <div class="stat"><div class="label">知识库</div><div class="value">${d.totals.kb_count}</div></div>
-        <div class="stat"><div class="label">文档</div><div class="value">${d.totals.documents}</div></div>
-        <div class="stat"><div class="label">向量块</div><div class="value">${d.totals.chunks}</div></div>
+        <div class="stat"><div class="label">${esc(t("dash.kb_count"))}</div><div class="value">${d.totals.kb_count}</div></div>
+        <div class="stat"><div class="label">${esc(t("dash.docs"))}</div><div class="value">${d.totals.documents}</div></div>
+        <div class="stat"><div class="label">${esc(t("dash.chunks"))}</div><div class="value">${d.totals.chunks}</div></div>
       </div>
 
       <div class="card" style="margin-bottom:20px">
-        <h2>服务状态</h2>
+        <h2>${esc(t("admin_dash.services"))}</h2>
         <div class="svc-grid">
           ${d.services.map((s) => `
             <div class="svc">
@@ -1284,15 +1308,17 @@ function renderAdminDash(d) {
       </div>
 
       <div class="form-grid" style="margin-bottom:20px">
-        ${modelCard("Embedding 模型", d.models.embedding)}
-        ${modelCard("大模型", d.models.llm)}
-        ${modelCard("向量库", d.models.vectorstore)}
+        ${modelCard(t("admin_dash.embedding"), d.models.embedding)}
+        ${modelCard(t("admin_dash.llm"), d.models.llm)}
+        ${modelCard(t("admin_dash.vectorstore"), d.models.vectorstore)}
       </div>
 
       <div class="card">
-        <h2>全部知识库（${d.knowledge_bases.length}）</h2>
+        <h2>${esc(t("admin_dash.kbs", { n: d.knowledge_bases.length }))}</h2>
         ${d.knowledge_bases.length ? `<table>
-          <thead><tr><th>名称</th><th>描述</th><th>集合</th><th>维度</th><th>文档</th><th>块</th></tr></thead>
+          <thead><tr><th>${esc(t("kb.name"))}</th><th>${esc(t("kb.description"))}</th>
+            <th>${esc(t("admin_dash.collection"))}</th><th>${esc(t("admin_dash.dim"))}</th>
+            <th>${esc(t("kb.docs"))}</th><th>${esc(t("kb.chunks"))}</th></tr></thead>
           <tbody>${d.knowledge_bases.map((k) => `
             <tr>
               <td><strong>${esc(k.name)}</strong></td>
@@ -1302,7 +1328,7 @@ function renderAdminDash(d) {
               <td>${k.document_count}</td>
               <td>${k.chunk_count}</td>
             </tr>`).join("")}
-          </tbody></table>` : `<div class="empty">暂无知识库</div>`}
+          </tbody></table>` : `<div class="empty">${esc(t("admin_dash.no_kb"))}</div>`}
       </div>`;
 }
 
@@ -1313,20 +1339,22 @@ async function loadUsers() {
   try {
     const users = await api("/api/auth/users");
     $("#user-list").innerHTML = `<table>
-      <thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>来源</th><th>状态</th><th>最近登录</th><th></th></tr></thead>
+      <thead><tr><th>${esc(t("users.username"))}</th><th>${esc(t("users.display_name"))}</th>
+        <th>${esc(t("users.role"))}</th><th>${esc(t("users.source"))}</th>
+        <th>${esc(t("users.status"))}</th><th>${esc(t("users.last_login"))}</th><th></th></tr></thead>
       <tbody>${users.map((u) => `
         <tr>
           <td><strong>${esc(u.username)}</strong></td>
           <td class="muted">${esc(u.display_name || "-")}</td>
           <td><span class="badge ${u.role === "admin" ? "ok" : ""}">${esc(u.role)}</span></td>
           <td class="muted">${esc(u.source)}</td>
-          <td>${u.is_active ? '<span class="badge ok">启用</span>' : '<span class="badge err">停用</span>'}</td>
+          <td>${u.is_active ? `<span class="badge ok">${esc(t("users.active"))}</span>` : `<span class="badge err">${esc(t("users.inactive"))}</span>`}</td>
           <td class="muted mono">${esc((u.last_login_at || "-").slice(0, 19))}</td>
           <td class="actions">
             ${u.role !== "admin" ? `
               <button class="btn btn-sm" data-toggle-user="${u.id}" data-active="${u.is_active}">
-                ${u.is_active ? "停用" : "启用"}</button>
-              <button class="btn btn-sm btn-danger" data-del-user="${u.id}">删除</button>` : ""}
+                ${u.is_active ? esc(t("users.disable")) : esc(t("users.enable"))}</button>
+              <button class="btn btn-sm btn-danger" data-del-user="${u.id}">${esc(t("common.delete"))}</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table>`;
@@ -1343,7 +1371,7 @@ async function loadUsers() {
     });
     $$("[data-del-user]").forEach((b) => {
       b.addEventListener("click", async () => {
-        if (!confirm("删除该用户？")) return;
+        if (!confirm(t("users.delete_confirm"))) return;
         await api(`/api/auth/users/${b.dataset.delUser}`, { method: "DELETE" })
           .catch((e) => toast(e.message, "err"));
         loadUsers();
@@ -1360,7 +1388,9 @@ async function loadAudit() {
   try {
     const logs = await api("/api/admin/audit?limit=30");
     $("#audit-list").innerHTML = logs.length ? `<table>
-      <thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>目标</th><th>详情</th></tr></thead>
+      <thead><tr><th>${esc(t("users.time"))}</th><th>${esc(t("users.operator"))}</th>
+        <th>${esc(t("users.action"))}</th><th>${esc(t("users.target"))}</th>
+        <th>${esc(t("users.detail"))}</th></tr></thead>
       <tbody>${logs.map((l) => `
         <tr>
           <td class="muted mono">${esc((l.created_at || "").slice(0, 19).replace("T", " "))}</td>
@@ -1369,28 +1399,28 @@ async function loadAudit() {
           <td class="muted">${esc(l.target || "-")}</td>
           <td class="muted">${esc(l.detail || "")}</td>
         </tr>`).join("")}
-      </tbody></table>` : `<div class="empty">暂无记录</div>`;
+      </tbody></table>` : `<div class="empty">${esc(t("users.audit_empty"))}</div>`;
   } catch { /* ignore */ }
 }
 
 $("#btn-create-user").addEventListener("click", () => {
   modal({
-    title: "新建用户",
+    title: t("users.create_title"),
     body: `
-      <label class="field"><span>用户名</span>
+      <label class="field"><span>${esc(t("users.username"))}</span>
         <input class="input" id="m-username"></label>
-      <label class="field"><span>密码（至少 6 位）</span>
+      <label class="field"><span>${esc(t("users.password"))}</span>
         <input class="input" id="m-password" type="password"></label>
-      <label class="field"><span>显示名</span>
+      <label class="field"><span>${esc(t("users.display_name"))}</span>
         <input class="input" id="m-display"></label>
-      <label class="field"><span>邮箱</span>
+      <label class="field"><span>${esc(t("users.email"))}</span>
         <input class="input" id="m-email"></label>
-      <label class="field"><span>角色</span>
+      <label class="field"><span>${esc(t("users.role"))}</span>
         <select class="select" id="m-role">
-          <option value="user">普通用户</option>
-          <option value="admin">管理员</option>
+          <option value="user">${esc(t("users.role_user"))}</option>
+          <option value="admin">${esc(t("users.role_admin"))}</option>
         </select></label>`,
-    okText: "创建",
+    okText: t("common.create"),
     onOk: async () => {
       await api("/api/auth/users", {
         method: "POST",
@@ -1402,11 +1432,35 @@ $("#btn-create-user").addEventListener("click", () => {
           role: $("#m-role").value,
         }),
       });
-      toast("已创建", "ok");
+      toast(t("users.created"), "ok");
       loadUsers();
     },
   });
 });
 
 /* ------------------------------------------------------------------ 初始化 */
+/* ------------------------------------------------------------------ 语言切换 */
+function syncLangButtons() {
+  $$(".lang-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.lang === getLang());
+  });
+}
+
+$$(".lang-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    setLang(b.dataset.lang);
+    syncLangButtons();
+    // 动态内容需要重绘
+    if (state.user) {
+      show(state.page);
+    }
+  });
+});
+
+// 语言变化时刷新动态内容
+window.addEventListener("langchange", () => {
+  syncLangButtons();
+  if (state.user) show(state.page);
+});
+
 boot();
