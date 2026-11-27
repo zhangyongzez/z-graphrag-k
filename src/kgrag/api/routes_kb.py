@@ -267,12 +267,52 @@ def ingest_local(
     if not p.exists():
         raise HTTPException(404, f"路径不存在: {path}")
     audit(user.id, user.username, "kb.ingest", target=kb_id, detail=path)
-    return ingest_path(p, collection=kb.collection)
+    try:
+        return ingest_path(p, collection=kb.collection)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, _friendly_ingest_error(e)) from e
+
+
+def _friendly_ingest_error(e: Exception) -> str:
+    """把底层异常翻译成用户能看懂的提示。"""
+    msg = str(e)
+    if "DataDirLockedError" in msg or "another process holds the lock" in msg:
+        return (
+            "向量库文件被另一个进程占用。请确认：\n"
+            "1. 没有同时运行多个服务实例（检查是否有残留的 python 进程）\n"
+            "2. 之前的服务已完全退出\n"
+            "3. 或改用 Milvus 服务端（系统配置 → 向量库 → milvus）"
+        )
+    if "Open local milvus failed" in msg:
+        return (
+            "无法打开本地向量库。通常是文件被占用或损坏。\n"
+            "请重启服务后重试；若仍失败，检查 data/milvus/kgrag.db 是否被其他程序锁定。"
+        )
+    return f"导入失败：{msg}"
 
 
 # --------------------------------------------------------------------------- #
 # 权限管理（管理员）
 # --------------------------------------------------------------------------- #
+@router.get("/permissions/overview")
+def permissions_overview(admin: User = Depends(require_admin)) -> list[dict]:
+    """所有知识库的授权概览，供管理页一次性展示。"""
+    out = []
+    for kb in get_registry().list():
+        owner_id, owner_name, is_public = _owner_info(kb.id)
+        out.append(
+            {
+                "id": kb.id,
+                "name": kb.name,
+                "owner_id": owner_id,
+                "owner_name": owner_name,
+                "is_public": is_public,
+                "grants": perms.list_grants(kb.id),
+            }
+        )
+    return out
+
+
 @router.get("/{kb_id}/permissions")
 def get_permissions(kb_id: str, admin: User = Depends(require_admin)) -> dict:
     _kb_or_404(kb_id)

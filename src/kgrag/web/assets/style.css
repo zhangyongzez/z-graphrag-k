@@ -381,3 +381,25 @@ td.actions { text-align: right; white-space: nowrap; }
 .lang-btn:hover { color: var(--text); background: var(--bg-hover); }
 .lang-btn.active { color: var(--accent); font-weight: 600; }
 .lang-sep { color: var(--border); }
+
+/* ---------------------------------------------------------------- 授权管理 */
+.grant-row {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.grant-row:last-child { border-bottom: none; }
+.grant-users { display: flex; flex-wrap: wrap; gap: 8px; }
+.grant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all .15s;
+}
+.grant-chip:hover { border-color: var(--accent-dim); }
+.grant-chip.on { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+.grant-chip input { accent-color: var(--accent); }

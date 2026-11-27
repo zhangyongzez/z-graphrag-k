@@ -127,7 +127,7 @@ def add_message(
 
 def list_messages(conv_id: str) -> list[dict]:
     rows = query(
-        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, id",
+        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq",
         (conv_id,),
     )
     out = []

@@ -457,3 +457,90 @@ def test_api_key_with_space_rejected(admin_client):
         },
     )
     assert r.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# 对话模式与历史
+# --------------------------------------------------------------------------- #
+def test_chat_only_without_kb(admin_client):
+    """未选知识库时应进入纯对话模式，不报错。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    m = admin_client.post(
+        "/api/admin/models",
+        json={"name": "mock-chat", "kind": "llm", "provider": "mock"},
+    ).json()
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": m["id"]}})
+
+    r = admin_client.post("/api/chat", json={"question": "你好"})
+    assert r.status_code == 200
+    assert r.json()["chat_only"] is True
+    assert r.json()["sources"] == []
+
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": ""}})
+
+
+def test_message_order_preserved(admin_client):
+    """同一会话的消息应按发送顺序返回。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    m = admin_client.post(
+        "/api/admin/models",
+        json={"name": "mock-order", "kind": "llm", "provider": "mock"},
+    ).json()
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": m["id"]}})
+
+    conv = admin_client.post("/api/chat/conversations", json={"title": "t"}).json()
+    for q in ("第一问", "第二问"):
+        admin_client.post("/api/chat", json={"question": q, "conversation_id": conv["id"]})
+
+    msgs = admin_client.get(f"/api/chat/conversations/{conv['id']}").json()["messages"]
+    assert len(msgs) == 4
+    assert [x["role"] for x in msgs] == ["user", "assistant", "user", "assistant"]
+    assert msgs[0]["content"] == "第一问"
+    assert msgs[2]["content"] == "第二问"
+
+    admin_client.put("/api/admin/config", json={"values": {"llm_model_id": ""}})
+
+
+def test_grant_visible_to_user(admin_client, alice):
+    """管理员授权后，普通用户应能看到该知识库。"""
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    kb = admin_client.post("/api/kb", json={"name": "授权测试库"}).json()
+    alice_row = query_one("SELECT id FROM users WHERE username = 'alice'")
+
+    c = _as(admin_client, alice)
+    assert kb["id"] not in [k["id"] for k in c.get("/api/kb").json()]
+
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    admin_client.post(
+        f"/api/kb/{kb['id']}/permissions",
+        json={"user_id": alice_row["id"], "can_write": False},
+    )
+
+    c = _as(admin_client, alice)
+    assert kb["id"] in [k["id"] for k in c.get("/api/kb").json()]
+
+
+def test_permissions_overview(admin_client):
+    admin_client.cookies.set("kgrag_session", _login_as(admin_client, "admin"))
+    r = admin_client.get("/api/kb/permissions/overview")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+    for item in r.json():
+        assert "id" in item and "grants" in item and "is_public" in item
+
+
+def test_trim_history():
+    """历史裁剪应保留最近的，并限制总长度。"""
+    from kgrag.retrieval.rag import _trim_history
+
+    # 轮数限制
+    long_hist = [("human", f"q{i}") for i in range(50)]
+    assert len(_trim_history(long_hist, max_turns=3)) <= 6
+
+    # 字符数限制
+    big = [("human", "x" * 1000)] * 20
+    trimmed = _trim_history(big, max_turns=10, max_chars=3000)
+    assert sum(len(c) for _, c in trimmed) <= 3000
+
+    # 空
+    assert _trim_history([]) == []

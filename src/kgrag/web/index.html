@@ -58,6 +58,9 @@
       <button class="nav-item" data-page="users">
         <span class="ico">◉</span> <span data-i18n="nav.users">用户管理</span>
       </button>
+      <button class="nav-item" data-page="grants">
+        <span class="ico">⚿</span> <span data-i18n="nav.grants">授权管理</span>
+      </button>
     </div>
 
     <div class="sidebar-foot">
@@ -227,6 +230,20 @@
         <button class="btn btn-sm" id="btn-refresh-admin" data-i18n="common.refresh">刷新</button>
       </div>
       <div id="admin-dash-body"></div>
+    </section>
+
+    <!-- ==================================================== 授权管理 -->
+    <section class="page hidden" id="page-grants">
+      <div class="page-head">
+        <div>
+          <h1 data-i18n="grants.title">授权管理</h1>
+          <div class="sub" data-i18n="grants.subtitle">将知识库授权给普通用户；未授权时用户只能看到自己创建的知识库</div>
+        </div>
+        <button class="btn btn-sm" id="btn-refresh-grants" data-i18n="common.refresh">刷新</button>
+      </div>
+      <div class="card">
+        <div id="grants-list"></div>
+      </div>
     </section>
 
     <!-- ==================================================== 用户管理 -->

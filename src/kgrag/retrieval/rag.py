@@ -12,6 +12,14 @@ from kgrag.vectorstore import get_retriever
 
 logger = get_logger(__name__)
 
+CHAT_PROMPT = """你是一个乐于助人的 AI 助手。请用中文回答用户的问题。
+
+要求：
+1. 回答要准确、简洁、有条理。
+2. 如果不确定，如实说明，不要编造。
+3. 用中文回答，除非用户使用其他语言提问。
+"""
+
 SYSTEM_PROMPT = """你是一个严谨的知识库助手。请仅根据下面提供的资料回答问题。
 
 要求：
@@ -125,18 +133,29 @@ def answer(
     dict: ``{"answer": str, "sources": list[dict]}``
     """
     s = effective_settings()
-    if kb_weights:
-        docs = retrieve_weighted(
-            question, kb_weights, top_k=top_k, filter_expr=filter_expr
-        )
-    else:
-        docs = retrieve(question, top_k=top_k, filter_expr=filter_expr, collection=collection)
+    # 未指定知识库 -> 纯对话模式，不检索
+    chat_only = not kb_weights and not collection
 
-    messages: list[BaseMessage] = [
-        SystemMessage(content=SYSTEM_PROMPT.format(context=format_context(docs)))
-    ]
-    for role, content in history or []:
-        messages.append(HumanMessage(content=content) if role == "human" else AIMessage(content=content))
+    if chat_only:
+        docs: list[Document] = []
+        system_prompt = CHAT_PROMPT
+    else:
+        if kb_weights:
+            docs = retrieve_weighted(
+                question, kb_weights, top_k=top_k, filter_expr=filter_expr
+            )
+        else:
+            docs = retrieve(
+                question, top_k=top_k, filter_expr=filter_expr, collection=collection
+            )
+        system_prompt = SYSTEM_PROMPT.format(context=format_context(docs))
+
+    messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
+    for role, content in _trim_history(history or []):
+        messages.append(
+            HumanMessage(content=content) if role == "human"
+            else AIMessage(content=content)
+        )
     messages.append(HumanMessage(content=question))
 
     logger.debug(f"检索到 {len(docs)} 条资料，调用 LLM provider={s.llm_provider}")
@@ -157,7 +176,33 @@ def answer(
         for d in docs
     ]
     return {"answer": _extract_text(resp.content), "sources": sources,
-            "reasoning": _extract_reasoning(resp.content)}
+            "reasoning": _extract_reasoning(resp.content),
+            "chat_only": chat_only}
+
+
+def _trim_history(
+    history: list[tuple[str, str]],
+    max_turns: int = 10,
+    max_chars: int = 6000,
+) -> list[tuple[str, str]]:
+    """裁剪对话历史，避免超出上下文窗口。
+
+    策略：从最近的往回复溯，累计字符数超过 ``max_chars`` 或轮数超过
+    ``max_turns`` 就停，保证最近的内容一定保留。
+    """
+    if not history:
+        return []
+    picked: list[tuple[str, str]] = []
+    total = 0
+    for role, content in reversed(history):
+        # 每轮对话按 user + assistant 两条算
+        n = len(content or "")
+        if len(picked) >= max_turns * 2 or total + n > max_chars:
+            break
+        picked.append((role, content))
+        total += n
+    picked.reverse()
+    return picked
 
 
 def _extract_text(content) -> str:

@@ -61,6 +61,8 @@ class ChatResponse(BaseModel):
     retrieval_only: bool = False
     # 模型的推理过程（thinking 模型才有），前端可折叠展示
     reasoning: str = ""
+    # 未关联知识库，直接与 LLM 对话
+    chat_only: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -146,19 +148,18 @@ def _resolve_collection(kb_id: str | None, user: User) -> str | None:
 
 
 def _filtered_weights(req: ChatRequest, user: User) -> list[dict]:
-    """只保留用户有权访问的知识库。"""
-    out = []
-    for w in req.kb_weights:
-        if perms.can_read(w.kb_id, user):
-            out.append(w.model_dump())
-    return out
+    """只保留用户有权访问的知识库。
+
+    不自动扩展到「全部可见知识库」——用户必须显式选择。
+    未选择时由调用方提示用户先选知识库。
+    """
+    return [w.model_dump() for w in req.kb_weights if perms.can_read(w.kb_id, user)]
 
 
-def _do_retrieve(req: ChatRequest, user: User):
-    weights = _filtered_weights(req, user)
+def _do_retrieve(req: ChatRequest, weights: list[dict], collection: str | None):
+    """统一检索入口：有知识库权重走加权融合，否则单库检索。"""
     if weights:
         return retrieve_weighted(req.question, weights, top_k=req.top_k)
-    collection = _resolve_collection(req.kb_id, user)
     return retrieve(req.question, top_k=req.top_k, collection=collection)
 
 
@@ -194,6 +195,41 @@ def _build_sources(docs) -> list[dict]:
     ]
 
 
+def _save_turn(req: ChatRequest, user: User, answer: str, sources: list[dict]) -> None:
+    """把一轮问答写入会话（若指定了 conversation_id）。"""
+    if not req.conversation_id:
+        return
+    _owned_conversation(req.conversation_id, user)
+    conv.add_message(req.conversation_id, "user", req.question)
+    conv.add_message(req.conversation_id, "assistant", answer, sources)
+
+
+def _history_of(req: ChatRequest) -> list[tuple[str, str]]:
+    """对话历史：优先取数据库（更可靠），否则用前端传的。"""
+    if req.conversation_id:
+        msgs = conv.list_messages(req.conversation_id)
+        return [
+            ("human" if m["role"] == "user" else "ai", m["content"])
+            for m in msgs
+            if m["role"] in ("user", "assistant")
+        ]
+    return [(m.role, m.content) for m in req.history]
+
+
+def _msg(key: str) -> str:
+    """后端提示信息（按请求语言）。"""
+    from kgrag.i18n import is_en
+
+    table = {
+        "chat.no_llm_configured": (
+            "No LLM configured. Add one in Models and select it in Settings."
+            if is_en()
+            else "未配置大模型，无法对话。请到「模型管理」添加并在「系统配置」中选择。"
+        ),
+    }
+    return table.get(key, key)
+
+
 def _llm_ready() -> bool:
     """是否已配置可用的 LLM（模型管理里选中了模型）。"""
     from kgrag.settings import selected_model
@@ -204,15 +240,17 @@ def _llm_ready() -> bool:
 @router.post("", response_model=ChatResponse)
 def chat(req: ChatRequest, user: User = Depends(current_user)) -> ChatResponse:
     weights = _filtered_weights(req, user)
-    collection = None if weights else _resolve_collection(req.kb_id, user)
+    collection = _resolve_collection(req.kb_id, user) if req.kb_id else None
+    # 未选知识库 -> 纯对话模式（直接和 LLM 聊，不检索）
+    chat_only = not weights and collection is None
 
-    # 未配置 LLM 时降级为「纯检索」：返回命中的原文片段，不做生成
+    # 未配置 LLM 时：有知识库就降级为纯检索，没有则报错
     if not _llm_ready():
-        docs = (
-            retrieve_weighted(req.question, weights, top_k=req.top_k)
-            if weights
-            else retrieve(req.question, top_k=req.top_k, collection=collection)
-        )
+        if chat_only:
+            answer = _msg("chat.no_llm_configured")
+            _save_turn(req, user, answer, [])
+            return ChatResponse(answer=answer, sources=[], chat_only=True)
+        docs = _do_retrieve(req, weights, collection)
         sources = _build_sources(docs)
         answer = _format_retrieval_only(docs)
         if req.conversation_id:
@@ -225,7 +263,7 @@ def chat(req: ChatRequest, user: User = Depends(current_user)) -> ChatResponse:
         result = rag_answer(
             req.question,
             top_k=req.top_k,
-            history=[(m.role, m.content) for m in req.history],
+            history=_history_of(req),
             collection=collection,
             kb_weights=weights or None,
             llm_model=req.llm_model,
@@ -241,7 +279,12 @@ def chat(req: ChatRequest, user: User = Depends(current_user)) -> ChatResponse:
             req.conversation_id, "assistant", result["answer"],
             result.get("sources"), result.get("reasoning", ""),
         )
-    return ChatResponse(**result)
+    return ChatResponse(
+        answer=result["answer"],
+        sources=result.get("sources", []),
+        reasoning=result.get("reasoning", ""),
+        chat_only=result.get("chat_only", False),
+    )
 
 
 def _format_retrieval_only(docs) -> str:
@@ -268,24 +311,32 @@ def chat_stream(req: ChatRequest, user: User = Depends(current_user)) -> Streami
     - ``event: done``    结束
     """
     weights = _filtered_weights(req, user)
-    collection = None if weights else _resolve_collection(req.kb_id, user)
+    collection = _resolve_collection(req.kb_id, user) if req.kb_id else None
     conv_id = req.conversation_id
     if conv_id:
         _owned_conversation(conv_id, user)
+
+    chat_only = not weights and collection is None
 
     def event_gen() -> Iterator[str]:
         answer = ""
         sources: list[dict] = []
         try:
-            if weights:
+            # 未选知识库 -> 纯对话，不检索
+            if chat_only:
+                docs = []
+            elif weights:
                 docs = retrieve_weighted(req.question, weights, top_k=req.top_k)
             else:
                 docs = retrieve(req.question, top_k=req.top_k, collection=collection)
             sources = _source_dicts(docs)
             yield _sse("sources", {"sources": sources})
 
-            # 未配置 LLM：降级为纯检索，直接把片段流式吐出来
+            # 未配置 LLM：有知识库则降级纯检索，无知识库则报错
             if not _llm_ready():
+                if chat_only:
+                    yield _sse("error", {"message": _msg("chat.no_llm_configured")})
+                    return
                 text = _format_retrieval_only(docs)
                 yield _sse("retrieval_only", {"enabled": True})
                 yield _sse("delta", {"text": text})
@@ -295,19 +346,29 @@ def chat_stream(req: ChatRequest, user: User = Depends(current_user)) -> Streami
                     conv.add_message(conv_id, "assistant", text, sources)
                 return
 
-            from langchain_core.messages import HumanMessage, SystemMessage
+            from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
             from kgrag.llm import get_llm
-            from kgrag.retrieval.rag import SYSTEM_PROMPT
+            from kgrag.retrieval.rag import CHAT_PROMPT, SYSTEM_PROMPT
+
+            if chat_only:
+                system_prompt = CHAT_PROMPT
+            else:
+                system_prompt = SYSTEM_PROMPT.format(context=format_context(docs))
 
             messages = [
-                SystemMessage(content=SYSTEM_PROMPT.format(context=format_context(docs))),
+                SystemMessage(content=system_prompt),
                 HumanMessage(content=req.question),
             ]
-            for m in req.history:
-                cls = HumanMessage if m.role == "human" else None
-                if cls:
-                    messages.insert(-1, cls(content=m.content))
+            # 历史放在系统提示与当前问题之间
+            from kgrag.retrieval.rag import _trim_history
+
+            for role, content in _trim_history(_history_of(req)):
+                messages.insert(
+                    -1,
+                    HumanMessage(content=content) if role == "human"
+                    else AIMessage(content=content),
+                )
             llm = get_llm(model_id=req.llm_model) if req.llm_model else get_llm()
             from kgrag.retrieval.rag import _extract_reasoning, _extract_text
 

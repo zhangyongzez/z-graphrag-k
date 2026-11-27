@@ -233,6 +233,7 @@ const PAGE_LOADERS = {
   models: loadModels,
   "admin-dash": loadAdminDash,
   users: loadUsers,
+  grants: loadGrants,
 };
 
 function show(page) {
@@ -634,7 +635,10 @@ function renderKbWeights(weights) {
     return;
   }
   const map = new Map(weights.map((w) => [w.kb_id, w.weight]));
-  el.innerHTML = state.kbs.map((kb) => `
+  const hint = `<div class="muted" style="font-size:11px;padding:0 0 6px">
+    ${esc(t("chat.multi_select"))}${map.size === 0 ? " · " + esc(t("chat.chat_only")) : ""}
+  </div>`;
+  el.innerHTML = hint + state.kbs.map((kb) => `
     <div class="kb-weight">
       <input type="checkbox" data-w-kb="${kb.id}" ${map.has(kb.id) ? "checked" : ""}>
       <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
@@ -673,7 +677,8 @@ async function saveWeights() {
   state.currentConv.kb_weights = weights;
   $("#chat-sub").textContent = weights.length
     ? t("chat.kb_linked", { n: weights.length })
-    : t("chat.no_kb_selected");
+    : t("chat.chat_only");
+  renderKbWeights(weights);
 }
 
 $("#btn-new-conv").addEventListener("click", async () => {
@@ -1333,6 +1338,97 @@ function renderAdminDash(d) {
 }
 
 $("#btn-refresh-admin").addEventListener("click", loadAdminDash);
+
+/* ------------------------------------------------------------------ 授权管理 */
+async function loadGrants() {
+  try {
+    const [kbs, users] = await Promise.all([
+      api("/api/kb/permissions/overview"),
+      api("/api/auth/users"),
+    ]);
+    state.allUsers = users;
+    renderGrants(kbs, users);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function renderGrants(kbs, users) {
+  const el = $("#grants-list");
+  if (!kbs.length) {
+    el.innerHTML = `<div class="empty">${esc(t("grants.no_kb"))}</div>`;
+    return;
+  }
+  const normalUsers = users.filter((u) => u.role !== "admin");
+
+  el.innerHTML = kbs.map((kb) => {
+    const granted = new Set(kb.grants.map((g) => g.user_id));
+    return `
+      <div class="grant-row">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <div>
+            <strong>${esc(kb.name)}</strong>
+            ${kb.is_public ? `<span class="badge ok">${esc(t("dash.public"))}</span>` : ""}
+            <div class="muted" style="font-size:12px">
+              ${esc(t("kb.owner"))}: ${esc(kb.owner_name || "—")}
+            </div>
+          </div>
+          <label class="row" style="gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" data-public="${kb.id}" ${kb.is_public ? "checked" : ""}>
+            <span>${esc(t("grants.public"))}</span>
+          </label>
+        </div>
+        <div class="grant-users">
+          ${normalUsers.length ? normalUsers.map((u) => `
+            <label class="grant-chip ${granted.has(u.id) ? "on" : ""}">
+              <input type="checkbox" data-grant="${kb.id}" data-user="${u.id}"
+                ${granted.has(u.id) ? "checked" : ""}>
+              <span>${esc(u.display_name || u.username)}</span>
+            </label>`).join("") : `<span class="muted" style="font-size:12px">${esc(t("grants.no_users"))}</span>`}
+        </div>
+      </div>`;
+  }).join("");
+
+  // 授权/取消授权
+  $$("[data-grant]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const kbId = cb.dataset.grant;
+      const userId = cb.dataset.user;
+      try {
+        if (cb.checked) {
+          await api(`/api/kb/${kbId}/permissions`, {
+            method: "POST",
+            body: JSON.stringify({ user_id: userId, can_write: false }),
+          });
+        } else {
+          await api(`/api/kb/${kbId}/permissions/${userId}`, { method: "DELETE" });
+        }
+        cb.closest(".grant-chip").classList.toggle("on", cb.checked);
+      } catch (e) {
+        cb.checked = !cb.checked;
+        toast(e.message, "err");
+      }
+    });
+  });
+
+  // 设为公共
+  $$("[data-public]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      try {
+        await api(`/api/kb/${cb.dataset.public}/public`, {
+          method: "PUT",
+          body: JSON.stringify({ is_public: cb.checked }),
+        });
+        toast(t("models.saved"), "ok");
+      } catch (e) {
+        cb.checked = !cb.checked;
+        toast(e.message, "err");
+      }
+    });
+  });
+}
+
+$("#btn-refresh-grants").addEventListener("click", loadGrants);
 
 /* ------------------------------------------------------------------ 用户管理 */
 async function loadUsers() {

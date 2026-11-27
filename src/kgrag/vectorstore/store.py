@@ -77,14 +77,19 @@ def get_vectorstore(collection: str | None = None) -> VectorStore:
 
 
 def reset_vectorstore() -> None:
-    _store_for.cache_clear()
-    # 共享的 Milvus 客户端可能来自旧的 store，一起失效
-    try:
-        from kgrag.kb.collections import reset_client
+    """清掉 langchain 的 VectorStore 缓存。
 
-        reset_client()
-    except Exception:  # noqa: BLE001 - 循环导入兜底
-        pass
+    .. important::
+
+        **不要同时清掉共享的 MilvusClient。**
+
+        milvus-lite 在进程内起一个本地服务并持有文件锁。如果这里把
+        ``_shared`` 置空，下次会新建 ``MilvusClient(同一路径)``，
+        而旧服务仍占着锁，就会抛 ``Open local milvus failed``。
+        共享客户端由 ``kb.collections`` 持有，只在切换向量库配置时
+        才需要重置（见 ``settings.update_config``）。
+    """
+    _store_for.cache_clear()
 
 
 def get_retriever(
